@@ -1,17 +1,19 @@
 package onvif
 
 import (
+	"encoding/xml"
 	"errors"
 	"net/http"
 	"net/http/httptest"
-	"sort"
 	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/AlexxIT/go2rtc/internal/app"
 	"github.com/AlexxIT/go2rtc/internal/streams"
 	"github.com/AlexxIT/go2rtc/pkg/core"
+	"github.com/AlexxIT/go2rtc/pkg/onvif"
 	"github.com/stretchr/testify/require"
 )
 
@@ -111,25 +113,120 @@ func request(t *testing.T, host, operation string) string {
 	return w.Body.String()
 }
 
-func TestDeviceIdentity(t *testing.T) {
-	// defaults
+func scopeItems(t *testing.T, host string) []string {
+	var r struct {
+		Items []string `xml:"Body>GetScopesResponse>Scopes>ScopeItem"`
+	}
+	require.NoError(t, xml.Unmarshal([]byte(request(t, host, "GetScopes")), &r))
+	return r.Items
+}
+
+func useDevice(t *testing.T, d Device) {
+	version := app.Version
+	app.Version = "1.2.3"
+	setDevice(d)
+	t.Cleanup(func() {
+		app.Version = version
+		setDevice(defaultDevice)
+	})
+}
+
+func TestDeviceDefaults(t *testing.T) {
+	useDevice(t, defaultDevice)
+
+	// identical to the hardcoded response before device information was configurable
+	require.Equal(t, string(onvif.GetDeviceInformationResponse("", "go2rtc", "1.2.3", "10.0.0.1:1984")),
+		request(t, "10.0.0.1:1984", "GetDeviceInformation"))
+
+	require.Equal(t, []string{
+		"onvif://www.onvif.org/type/Network_Video_Transmitter",
+		"onvif://www.onvif.org/Profile/Streaming",
+		"onvif://www.onvif.org/name/go2rtc",
+		"onvif://www.onvif.org/hardware/go2rtc",
+	}, scopeItems(t, "10.0.0.1"))
+}
+
+func TestDeviceTemplates(t *testing.T) {
+	useDevice(t, Device{
+		Manufacturer:    "hikvision",
+		Model:           "TA-HDTVI516-AS (go2rtc)",
+		FirmwareVersion: "v{{.Version}}",
+		SerialNumber:    "SN-{{with .Request}}{{.Host}}{{end}}",
+		Scopes: []string{
+			"name/front entry",
+			"/location/building/q14",
+			"hardware/{{.Manufacturer}} {{.Model}}",
+			"http://example.com/x",
+		},
+	})
+
+	b := request(t, "10.0.0.1", "GetDeviceInformation")
+	require.Contains(t, b, "<tds:Manufacturer>hikvision</tds:Manufacturer>")
+	require.Contains(t, b, "<tds:Model>TA-HDTVI516-AS (go2rtc)</tds:Model>")
+	require.Contains(t, b, "<tds:FirmwareVersion>v1.2.3</tds:FirmwareVersion>")
+	require.Contains(t, b, "<tds:SerialNumber>SN-10.0.0.1</tds:SerialNumber>")
+
+	// configured scopes replace the defaults of their category; other defaults stay
+	require.Equal(t, []string{
+		"onvif://www.onvif.org/type/Network_Video_Transmitter",
+		"onvif://www.onvif.org/Profile/Streaming",
+		"onvif://www.onvif.org/name/front%20entry",
+		"onvif://www.onvif.org/location/building/q14",
+		"onvif://www.onvif.org/hardware/hikvision%20TA-HDTVI516-AS%20%28go2rtc%29",
+		"http://example.com/x",
+	}, scopeItems(t, "10.0.0.1"))
+}
+
+func TestDeviceWithoutRequest(t *testing.T) {
+	useDevice(t, defaultDevice)
+	info := deviceInformation(nil)
+	require.Equal(t, "", info.SerialNumber)
+	require.Equal(t, "go2rtc", info.Model)
+
+	// a template that needs a request falls back to the default outside of one
+	useDevice(t, Device{SerialNumber: "{{.Request.Host}}"})
+	require.Equal(t, "", deviceInformation(nil).SerialNumber)
+	require.Equal(t, "10.0.0.1", deviceInformation(&Request{Host: "10.0.0.1"}).SerialNumber)
+}
+
+func TestDeviceBadTemplates(t *testing.T) {
+	useDevice(t, Device{
+		Model:        "{{.Model",    // parse error
+		SerialNumber: "{{.Serial}}", // execution error: no such field
+		Scopes:       []string{"name/{{", "location/50% off", "location/ok"},
+	})
+
 	b := request(t, "10.0.0.1", "GetDeviceInformation")
 	require.Contains(t, b, "<tds:Model>go2rtc</tds:Model>")
 	require.Contains(t, b, "<tds:SerialNumber>10.0.0.1</tds:SerialNumber>")
-	require.Contains(t, request(t, "10.0.0.1", "GetScopes"), "onvif://www.onvif.org/name/go2rtc<")
 
-	defaults := device
-	t.Cleanup(func() { device = defaults })
-	device = Device{Name: "front entry", Manufacturer: "hikvision", Model: "TA-HDTVI516-AS", SerialNumber: "SN-ch01"}
+	// broken scopes are skipped; the required defaults remain
+	require.Equal(t, []string{
+		"onvif://www.onvif.org/type/Network_Video_Transmitter",
+		"onvif://www.onvif.org/Profile/Streaming",
+		"onvif://www.onvif.org/name/go2rtc",
+		"onvif://www.onvif.org/hardware/go2rtc",
+		"onvif://www.onvif.org/location/ok",
+	}, scopeItems(t, "10.0.0.1"))
+}
 
-	b = request(t, "10.0.0.1", "GetDeviceInformation")
-	require.Contains(t, b, "<tds:Manufacturer>hikvision</tds:Manufacturer>")
-	require.Contains(t, b, "<tds:Model>TA-HDTVI516-AS</tds:Model>")
-	require.Contains(t, b, "<tds:SerialNumber>SN-ch01</tds:SerialNumber>")
+func TestResolveScope(t *testing.T) {
+	for in, out := range map[string]string{
+		"name/front entry":             "onvif://www.onvif.org/name/front%20entry",
+		"/name/front entry":            "onvif://www.onvif.org/name/front%20entry",
+		"location/building/q14":        "onvif://www.onvif.org/location/building/q14",
+		"onvif://www.onvif.org/name/x": "onvif://www.onvif.org/name/x",
+		"http://example.com/x":         "http://example.com/x",
+		"name/Café":                    "onvif://www.onvif.org/name/Caf%C3%A9",
+	} {
+		s, err := resolveScope(in)
+		require.NoError(t, err, in)
+		require.Equal(t, out, s, in)
+	}
 
-	b = request(t, "10.0.0.1", "GetScopes")
-	require.Contains(t, b, "onvif://www.onvif.org/name/front%20entry<")
-	require.Contains(t, b, "onvif://www.onvif.org/hardware/TA-HDTVI516-AS<")
+	require.Equal(t, "name", scopeCategory("onvif://www.onvif.org/name/x"))
+	require.Equal(t, "profile", scopeCategory("onvif://www.onvif.org/Profile/Streaming"))
+	require.Equal(t, "", scopeCategory("http://example.com/name/x"))
 }
 
 func media(t *testing.T, operation, args string) (int, string) {
@@ -146,14 +243,12 @@ func TestVideoSources(t *testing.T) {
 		require.NoError(t, err)
 	}
 
-	defaults := device
-	t.Cleanup(func() { device = defaults })
-	device.VideoSources = map[string]VideoSource{
-		"ch10": {Profiles: []string{"ch10-main"}},
-		"ch2":  {Profiles: []string{"ch2-main", "ch2-sub"}},
-	}
+	useDevice(t, Device{VideoSources: []VideoSource{
+		{Token: "ch2", Profiles: []string{"ch2-main", "ch2-sub"}},
+		{Profiles: []string{"ch10-main"}}, // token defaults to the first profile
+	}})
 
-	// only listed streams, sources in natural order, profiles in listed order
+	// only listed streams, in config order
 	code, b := media(t, "GetProfiles", "")
 	require.Equal(t, http.StatusOK, code)
 	require.Equal(t, 3, strings.Count(b, "<trt:Profiles "))
@@ -164,7 +259,7 @@ func TestVideoSources(t *testing.T) {
 
 	_, b = media(t, "GetVideoSources", "")
 	require.Equal(t, 2, strings.Count(b, "<trt:VideoSources "))
-	require.Less(t, strings.Index(b, `token="ch2"`), strings.Index(b, `token="ch10"`))
+	require.Less(t, strings.Index(b, `token="ch2"`), strings.Index(b, `token="ch10-main"`))
 
 	code, _ = media(t, "GetVideoSourceConfiguration", "<ConfigurationToken>ch2</ConfigurationToken>")
 	require.Equal(t, http.StatusOK, code)
@@ -179,8 +274,17 @@ func TestVideoSources(t *testing.T) {
 	require.Contains(t, b, "/ch2-sub</tt:Uri>")
 }
 
-func TestNaturalLess(t *testing.T) {
-	tokens := []string{"ch10", "ch2", "ch1", "b", "a10", "a9"}
-	sort.Slice(tokens, func(i, j int) bool { return naturalLess(tokens[i], tokens[j]) })
-	require.Equal(t, []string{"a9", "a10", "b", "ch1", "ch2", "ch10"}, tokens)
+func TestValidVideoSources(t *testing.T) {
+	valid := validVideoSources([]VideoSource{
+		{Token: "a", Profiles: []string{"s1"}},
+		{Token: "a", Profiles: []string{"s2"}},       // duplicate token
+		{Token: "b", Profiles: []string{"s1"}},       // stream already a profile
+		{Token: "c", Profiles: []string{"s3", "s3"}}, // stream listed twice
+		{Token: "d"}, // no profiles
+		{Profiles: []string{"s4"}},
+	})
+	require.Equal(t, []VideoSource{
+		{Token: "a", Profiles: []string{"s1"}},
+		{Token: "s4", Profiles: []string{"s4"}},
+	}, valid)
 }

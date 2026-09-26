@@ -21,14 +21,14 @@ import (
 )
 
 func Init() {
+	log = app.GetLogger("onvif")
+
 	var cfg struct {
 		Mod Device `yaml:"onvif"`
 	}
-	cfg.Mod = device // defaults
+	cfg.Mod = defaultDevice
 	app.LoadConfig(&cfg)
-	device = cfg.Mod
-
-	log = app.GetLogger("onvif")
+	setDevice(cfg.Mod)
 
 	streams.HandleFunc("onvif", streamOnvif)
 
@@ -40,25 +40,6 @@ func Init() {
 }
 
 var log zerolog.Logger
-
-// Device is the ONVIF device that this server presents
-type Device struct {
-	Name         string `yaml:"name"`          // scope onvif://www.onvif.org/name/
-	Manufacturer string `yaml:"manufacturer"`  // GetDeviceInformation
-	Model        string `yaml:"model"`         // GetDeviceInformation and scope onvif://www.onvif.org/hardware/
-	SerialNumber string `yaml:"serial_number"` // GetDeviceInformation, the request host if empty
-
-	// VideoSources maps a video source token to the streams (profiles) that encode it.
-	// When set, only the listed streams are profiles; otherwise every stream is
-	// a profile with its own video source.
-	VideoSources map[string]VideoSource `yaml:"video_sources"`
-}
-
-type VideoSource struct {
-	Profiles []string `yaml:"profiles"` // highest quality first
-}
-
-var device = Device{Name: "go2rtc", Model: "go2rtc"}
 
 func streamOnvif(rawURL string) (core.Producer, error) {
 	client, err := onvif.NewClient(rawURL)
@@ -114,7 +95,7 @@ func onvifDeviceService(w http.ResponseWriter, r *http.Request) {
 		b = onvif.StaticResponse(operation)
 
 	case onvif.DeviceGetScopes:
-		b = onvif.GetScopesResponse(device.Name, device.Model)
+		b = onvif.GetScopesResponse(scopes(deviceInformation(&Request{Host: r.Host})))
 
 	case onvif.DeviceGetCapabilities:
 		// important for Hass: Media section
@@ -124,12 +105,8 @@ func onvifDeviceService(w http.ResponseWriter, r *http.Request) {
 		b = onvif.GetServicesResponse(r.Host)
 
 	case onvif.DeviceGetDeviceInformation:
-		// important for Hass: SerialNumber (unique server ID)
-		serial := device.SerialNumber
-		if serial == "" {
-			serial = r.Host
-		}
-		b = onvif.GetDeviceInformationResponse(device.Manufacturer, device.Model, app.Version, serial)
+		info := deviceInformation(&Request{Host: r.Host})
+		b = onvif.GetDeviceInformationResponse(info.Manufacturer, info.Model, info.FirmwareVersion, info.SerialNumber)
 
 	case onvif.DeviceSystemReboot:
 		b = onvif.StaticResponse(operation)

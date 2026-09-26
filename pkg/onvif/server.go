@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"fmt"
 	"html"
-	"net/url"
 	"regexp"
 	"time"
 )
@@ -137,17 +136,11 @@ func GetDeviceInformationResponse(manuf, model, firmware, serial string) []byte 
 	return e.Bytes()
 }
 
-// GetScopesResponse returns the fixed device scopes, with the name and hardware scopes
-func GetScopesResponse(name, hardware string) []byte {
+// GetScopesResponse returns the scopes as fixed scope items
+func GetScopesResponse(scopes []string) []byte {
 	e := NewEnvelope()
 	e.Append(`<tds:GetScopesResponse>`)
-	for _, scope := range []string{
-		"onvif://www.onvif.org/name/" + url.PathEscape(name),
-		"onvif://www.onvif.org/hardware/" + url.PathEscape(hardware),
-		"onvif://www.onvif.org/location/github",
-		"onvif://www.onvif.org/Profile/Streaming",
-		"onvif://www.onvif.org/type/Network_Video_Transmitter",
-	} {
+	for _, scope := range scopes {
 		e.Append(`<tds:Scopes><tt:ScopeDef>Fixed</tt:ScopeDef><tt:ScopeItem>`, html.EscapeString(scope), `</tt:ScopeItem></tds:Scopes>`)
 	}
 	e.Append(`</tds:GetScopesResponse>`)

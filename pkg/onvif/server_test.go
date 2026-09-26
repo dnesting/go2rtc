@@ -150,9 +150,9 @@ func TestDeviceResponses(t *testing.T) {
 	var scopes struct {
 		Items []string `xml:"Body>GetScopesResponse>Scopes>ScopeItem"`
 	}
-	require.NoError(t, xml.Unmarshal(GetScopesResponse("Front Entry & Lobby", "TA-HDTVI516-AS (go2rtc)"), &scopes))
-	require.Contains(t, scopes.Items, "onvif://www.onvif.org/name/Front%20Entry%20&%20Lobby")
-	require.Contains(t, scopes.Items, "onvif://www.onvif.org/hardware/TA-HDTVI516-AS%20%28go2rtc%29")
+	b = GetScopesResponse([]string{"onvif://www.onvif.org/name/A&B", "onvif://www.onvif.org/Profile/Streaming"})
+	require.NoError(t, xml.Unmarshal(b, &scopes))
+	require.Equal(t, []string{"onvif://www.onvif.org/name/A&B", "onvif://www.onvif.org/Profile/Streaming"}, scopes.Items)
 }
 
 func TestSharedVideoSource(t *testing.T) {

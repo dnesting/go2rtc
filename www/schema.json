@@ -484,37 +484,54 @@
     "onvif": {
       "type": "object",
       "properties": {
-        "name": {
-          "description": "Device name, as scope `onvif://www.onvif.org/name/`",
-          "type": "string",
-          "default": "go2rtc"
-        },
         "manufacturer": {
-          "description": "Manufacturer in GetDeviceInformation",
-          "type": "string"
+          "description": "GetDeviceInformation Manufacturer (text/template)",
+          "type": "string",
+          "default": ""
         },
         "model": {
-          "description": "Model in GetDeviceInformation, and scope `onvif://www.onvif.org/hardware/`",
+          "description": "GetDeviceInformation Model (text/template)",
           "type": "string",
           "default": "go2rtc"
         },
+        "firmware_version": {
+          "description": "GetDeviceInformation FirmwareVersion (text/template)",
+          "type": "string",
+          "default": "{{.Version}}"
+        },
         "serial_number": {
-          "description": "SerialNumber in GetDeviceInformation; defaults to the requested host",
-          "type": "string"
+          "description": "GetDeviceInformation SerialNumber (text/template); by default the requested host",
+          "type": "string",
+          "default": "{{with .Request}}{{.Host}}{{end}}"
+        },
+        "scopes": {
+          "description": "Scope URIs (text/template), relative to onvif://www.onvif.org/, e.g. `name/Front Door`. They replace the default scopes of the same category",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
         },
         "video_sources": {
-          "description": "Video source token → the streams (profiles) that encode it, highest quality first. When set, only the listed streams are ONVIF profiles",
-          "type": "object",
-          "additionalProperties": {
+          "description": "Video sources in advertised order. When set, only the listed streams are ONVIF profiles",
+          "type": "array",
+          "items": {
             "type": "object",
             "properties": {
+              "token": {
+                "description": "Video source token; defaults to the first profile",
+                "type": "string"
+              },
               "profiles": {
+                "description": "Streams advertised as profiles of this video source, highest quality first",
                 "type": "array",
                 "items": {
                   "type": "string"
                 }
               }
-            }
+            },
+            "required": [
+              "profiles"
+            ]
           }
         }
       }
