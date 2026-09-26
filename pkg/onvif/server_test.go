@@ -2,6 +2,7 @@ package onvif
 
 import (
 	"encoding/xml"
+	"strings"
 	"testing"
 
 	"github.com/AlexxIT/go2rtc/pkg/core"
@@ -121,7 +122,7 @@ func TestProfileResponses(t *testing.T) {
 		GetProfileResponse(main),
 		GetVideoSourcesResponse([]*Profile{main, sub}),
 		GetVideoSourceConfigurationsResponse([]*Profile{main, sub}),
-		GetVideoSourceConfigurationResponse(sub),
+		GetVideoSourceConfigurationResponse(sub.source()),
 		GetVideoEncoderConfigurationsResponse([]*Profile{main, sub}),
 		GetVideoEncoderConfigurationResponse(sub),
 		GetVideoEncoderConfigurationOptionsResponse(sub),
@@ -152,4 +153,43 @@ func TestDeviceResponses(t *testing.T) {
 	require.NoError(t, xml.Unmarshal(GetScopesResponse("Front Entry & Lobby", "TA-HDTVI516-AS (go2rtc)"), &scopes))
 	require.Contains(t, scopes.Items, "onvif://www.onvif.org/name/Front%20Entry%20&%20Lobby")
 	require.Contains(t, scopes.Items, "onvif://www.onvif.org/hardware/TA-HDTVI516-AS%20%28go2rtc%29")
+}
+
+func TestSharedVideoSource(t *testing.T) {
+	main := &Profile{Token: "main", Video: Video{Encoding: "H265", Width: 2560, Height: 1440, FrameRate: 25}, Audio: &Audio{Encoding: "AAC", SampleRate: 16}}
+	sub := &Profile{Token: "sub", Video: Video{Encoding: "H265", Width: 960, Height: 480, FrameRate: 12}, Audio: &Audio{Encoding: "AAC", SampleRate: 16}}
+	NewVideoSource("ch1", []*Profile{main, sub})
+	profiles := []*Profile{main, sub}
+
+	type ref struct {
+		Token       string `xml:"token,attr"`
+		SourceToken string
+		Bounds      struct {
+			Width int `xml:"width,attr"`
+		}
+	}
+	var r struct {
+		Profiles []struct {
+			Token string `xml:"token,attr"`
+			VSC   ref    `xml:"VideoSourceConfiguration"`
+			ASC   ref    `xml:"AudioSourceConfiguration"`
+			VEC   struct {
+				Width int `xml:"Resolution>Width"`
+			} `xml:"VideoEncoderConfiguration"`
+		} `xml:"Body>GetProfilesResponse>Profiles"`
+	}
+	require.NoError(t, xml.Unmarshal(GetProfilesResponse(profiles), &r))
+	require.Len(t, r.Profiles, 2)
+	for _, p := range r.Profiles {
+		// both profiles use the source configuration of the full 2560 input
+		require.Equal(t, "ch1", p.VSC.Token)
+		require.Equal(t, "ch1", p.VSC.SourceToken)
+		require.Equal(t, 2560, p.VSC.Bounds.Width)
+		require.Equal(t, "ch1", p.ASC.SourceToken)
+	}
+	require.Equal(t, 960, r.Profiles[1].VEC.Width)
+
+	require.Equal(t, 1, strings.Count(string(GetAudioSourcesResponse(profiles)), `<trt:AudioSources token="ch1">`))
+	require.Contains(t, string(GetVideoSourcesResponse(profiles)), `<trt:VideoSources token="ch1">`)
+	require.Equal(t, 1, strings.Count(string(GetVideoSourcesResponse(profiles)), "<trt:VideoSources "))
 }

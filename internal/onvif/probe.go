@@ -23,14 +23,14 @@ var probeTimeout = 8 * time.Second
 // probeRetryDelay is the pause before retrying a source that failed to connect
 var probeRetryDelay = time.Second
 
-// getProfile describes a stream from the codecs its source provides.
+// probeProfile describes a stream from the codecs its source provides.
 // A running source answers immediately; an idle source is connected for the probe.
 // When the SDP has no video parameter sets, the probe waits for them in the bitstream.
 // It returns an error rather than guessing when the stream can't be described in time.
-func getProfile(name string) (*onvif.Profile, error) {
+func probeProfile(name string) (*onvif.Profile, error) {
 	stream := streams.Get(name)
 	if stream == nil {
-		return nil, errors.New("onvif: unknown profile " + name)
+		return nil, errors.New("onvif: unknown stream " + name)
 	}
 
 	deadline := time.Now().Add(probeTimeout)

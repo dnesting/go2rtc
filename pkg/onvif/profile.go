@@ -10,9 +10,58 @@ import (
 
 // Profile describes one ONVIF media profile. go2rtc stream name = profile token.
 type Profile struct {
-	Token string
-	Video Video
-	Audio *Audio // nil if the stream has no audio
+	Token  string
+	Source *VideoSource // nil: the profile is the only one of its own video source
+	Video  Video
+	Audio  *Audio // nil if the stream has no audio
+}
+
+// VideoSource is a physical video input, shared by the profiles that encode it.
+// It also stands for the input's audio source and both source configurations.
+type VideoSource struct {
+	Token     string
+	Width     int
+	Height    int
+	FrameRate int
+	Audio     bool // at least one profile has audio
+}
+
+// NewVideoSource links profiles to a shared source described by the first (highest quality) profile
+func NewVideoSource(token string, profiles []*Profile) *VideoSource {
+	s := &VideoSource{Token: token}
+	if len(profiles) > 0 {
+		v := profiles[0].Video
+		s.Width, s.Height, s.FrameRate = v.Width, v.Height, v.FrameRate
+	}
+	for _, p := range profiles {
+		p.Source = s
+		if p.Audio != nil {
+			s.Audio = true
+		}
+	}
+	return s
+}
+
+func (p *Profile) source() *VideoSource {
+	if p.Source != nil {
+		return p.Source
+	}
+	return &VideoSource{
+		Token: p.Token, Width: p.Video.Width, Height: p.Video.Height, FrameRate: p.Video.FrameRate, Audio: p.Audio != nil,
+	}
+}
+
+// videoSources returns the distinct sources of profiles, in profile order
+func videoSources(profiles []*Profile) []*VideoSource {
+	var sources []*VideoSource
+	seen := map[*VideoSource]bool{}
+	for _, p := range profiles {
+		if s := p.source(); !seen[s] {
+			seen[s] = true
+			sources = append(sources, s)
+		}
+	}
+	return sources
 }
 
 type Video struct {

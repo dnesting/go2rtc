@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"sort"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -129,4 +130,57 @@ func TestDeviceIdentity(t *testing.T) {
 	b = request(t, "10.0.0.1", "GetScopes")
 	require.Contains(t, b, "onvif://www.onvif.org/name/front%20entry<")
 	require.Contains(t, b, "onvif://www.onvif.org/hardware/TA-HDTVI516-AS<")
+}
+
+func media(t *testing.T, operation, args string) (int, string) {
+	body := `<s:Envelope xmlns:s="http://www.w3.org/2003/05/soap-envelope"><s:Body><` + operation +
+		` xmlns="http://www.onvif.org/ver10/media/wsdl">` + args + `</` + operation + `></s:Body></s:Envelope>`
+	w := httptest.NewRecorder()
+	onvifDeviceService(w, httptest.NewRequest("POST", "/onvif/media_service", strings.NewReader(body)))
+	return w.Code, w.Body.String()
+}
+
+func TestVideoSources(t *testing.T) {
+	for _, name := range []string{"ch2-main", "ch2-sub", "ch10-main", "hidden"} {
+		_, err := streams.New(name, "camera:"+name)
+		require.NoError(t, err)
+	}
+
+	defaults := device
+	t.Cleanup(func() { device = defaults })
+	device.VideoSources = map[string]VideoSource{
+		"ch10": {Profiles: []string{"ch10-main"}},
+		"ch2":  {Profiles: []string{"ch2-main", "ch2-sub"}},
+	}
+
+	// only listed streams, sources in natural order, profiles in listed order
+	code, b := media(t, "GetProfiles", "")
+	require.Equal(t, http.StatusOK, code)
+	require.Equal(t, 3, strings.Count(b, "<trt:Profiles "))
+	i1, i2, i3 := strings.Index(b, `token="ch2-main"`), strings.Index(b, `token="ch2-sub"`), strings.Index(b, `token="ch10-main"`)
+	require.True(t, i1 < i2 && i2 < i3, "profile order")
+	require.NotContains(t, b, "hidden")
+	require.Equal(t, 2, strings.Count(b, `<tt:VideoSourceConfiguration token="ch2"`), "ch2 profiles share a source")
+
+	_, b = media(t, "GetVideoSources", "")
+	require.Equal(t, 2, strings.Count(b, "<trt:VideoSources "))
+	require.Less(t, strings.Index(b, `token="ch2"`), strings.Index(b, `token="ch10"`))
+
+	code, _ = media(t, "GetVideoSourceConfiguration", "<ConfigurationToken>ch2</ConfigurationToken>")
+	require.Equal(t, http.StatusOK, code)
+
+	// unlisted streams are not profiles
+	code, _ = media(t, "GetProfile", "<ProfileToken>hidden</ProfileToken>")
+	require.Equal(t, http.StatusInternalServerError, code)
+	code, _ = media(t, "GetStreamUri", "<ProfileToken>hidden</ProfileToken>")
+	require.Equal(t, http.StatusInternalServerError, code)
+	code, b = media(t, "GetStreamUri", "<ProfileToken>ch2-sub</ProfileToken>")
+	require.Equal(t, http.StatusOK, code)
+	require.Contains(t, b, "/ch2-sub</tt:Uri>")
+}
+
+func TestNaturalLess(t *testing.T) {
+	tokens := []string{"ch10", "ch2", "ch1", "b", "a10", "a9"}
+	sort.Slice(tokens, func(i, j int) bool { return naturalLess(tokens[i], tokens[j]) })
+	require.Equal(t, []string{"a9", "a10", "b", "ch1", "ch2", "ch10"}, tokens)
 }

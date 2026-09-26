@@ -501,6 +501,21 @@
         "serial_number": {
           "description": "SerialNumber in GetDeviceInformation; defaults to the requested host",
           "type": "string"
+        },
+        "video_sources": {
+          "description": "Video source token → the streams (profiles) that encode it, highest quality first. When set, only the listed streams are ONVIF profiles",
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "profiles": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            }
+          }
         }
       }
     },

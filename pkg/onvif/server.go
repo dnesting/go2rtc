@@ -176,9 +176,9 @@ func appendProfile(e *Envelope, tag string, p *Profile) {
 	// go2rtc name = ONVIF Profile Name = ONVIF Profile token
 	e.Appendf(`<trt:%s token="%s" fixed="true">`, tag, p.Token)
 	e.Appendf(`<tt:Name>%s</tt:Name>`, p.Token)
-	appendVideoSourceConfiguration(e, "VideoSourceConfiguration", p)
+	appendVideoSourceConfiguration(e, "VideoSourceConfiguration", p.source())
 	if p.Audio != nil {
-		appendAudioSourceConfiguration(e, "AudioSourceConfiguration", p)
+		appendAudioSourceConfiguration(e, "AudioSourceConfiguration", p.source())
 	}
 	appendVideoEncoderConfiguration(e, "VideoEncoderConfiguration", p)
 	if p.Audio != nil {
@@ -191,11 +191,11 @@ func GetVideoSourcesResponse(profiles []*Profile) []byte {
 	// go2rtc name = ONVIF VideoSource token
 	e := NewEnvelope()
 	e.Append(`<trt:GetVideoSourcesResponse>`)
-	for _, p := range profiles {
+	for _, s := range videoSources(profiles) {
 		e.Appendf(`<trt:VideoSources token="%s">
 	<tt:Framerate>%d</tt:Framerate>
 	<tt:Resolution><tt:Width>%d</tt:Width><tt:Height>%d</tt:Height></tt:Resolution>
-</trt:VideoSources>`, p.Token, p.Video.FrameRate, p.Video.Width, p.Video.Height)
+</trt:VideoSources>`, s.Token, s.FrameRate, s.Width, s.Height)
 	}
 	e.Append(`</trt:GetVideoSourcesResponse>`)
 	return e.Bytes()
@@ -204,28 +204,28 @@ func GetVideoSourcesResponse(profiles []*Profile) []byte {
 func GetVideoSourceConfigurationsResponse(profiles []*Profile) []byte {
 	e := NewEnvelope()
 	e.Append(`<trt:GetVideoSourceConfigurationsResponse>`)
-	for _, p := range profiles {
-		appendVideoSourceConfiguration(e, "Configurations", p)
+	for _, s := range videoSources(profiles) {
+		appendVideoSourceConfiguration(e, "Configurations", s)
 	}
 	e.Append(`</trt:GetVideoSourceConfigurationsResponse>`)
 	return e.Bytes()
 }
 
-func GetVideoSourceConfigurationResponse(p *Profile) []byte {
+func GetVideoSourceConfigurationResponse(s *VideoSource) []byte {
 	e := NewEnvelope()
 	e.Append(`<trt:GetVideoSourceConfigurationResponse>`)
-	appendVideoSourceConfiguration(e, "Configuration", p)
+	appendVideoSourceConfiguration(e, "Configuration", s)
 	e.Append(`</trt:GetVideoSourceConfigurationResponse>`)
 	return e.Bytes()
 }
 
-func appendVideoSourceConfiguration(e *Envelope, tag string, p *Profile) {
-	// go2rtc name = ONVIF VideoSourceConfiguration token
+func appendVideoSourceConfiguration(e *Envelope, tag string, s *VideoSource) {
+	// VideoSource token = VideoSourceConfiguration token
 	e.Appendf(`<tt:%s token="%s" fixed="true">
 	<tt:Name>VSC</tt:Name>
 	<tt:SourceToken>%s</tt:SourceToken>
 	<tt:Bounds x="0" y="0" width="%d" height="%d"></tt:Bounds>
-</tt:%s>`, tag, p.Token, p.Token, p.Video.Width, p.Video.Height, tag)
+</tt:%s>`, tag, s.Token, s.Token, s.Width, s.Height, tag)
 }
 
 func GetVideoEncoderConfigurationsResponse(profiles []*Profile) []byte {
@@ -290,9 +290,9 @@ func GetVideoEncoderConfigurationOptionsResponse(p *Profile) []byte {
 func GetAudioSourcesResponse(profiles []*Profile) []byte {
 	e := NewEnvelope()
 	e.Append(`<trt:GetAudioSourcesResponse>`)
-	for _, p := range profiles {
-		if p.Audio != nil {
-			e.Appendf(`<trt:AudioSources token="%s"><tt:Channels>1</tt:Channels></trt:AudioSources>`, p.Token)
+	for _, s := range videoSources(profiles) {
+		if s.Audio {
+			e.Appendf(`<trt:AudioSources token="%s"><tt:Channels>1</tt:Channels></trt:AudioSources>`, s.Token)
 		}
 	}
 	e.Append(`</trt:GetAudioSourcesResponse>`)
@@ -302,21 +302,22 @@ func GetAudioSourcesResponse(profiles []*Profile) []byte {
 func GetAudioSourceConfigurationsResponse(profiles []*Profile) []byte {
 	e := NewEnvelope()
 	e.Append(`<trt:GetAudioSourceConfigurationsResponse>`)
-	for _, p := range profiles {
-		if p.Audio != nil {
-			appendAudioSourceConfiguration(e, "Configurations", p)
+	for _, s := range videoSources(profiles) {
+		if s.Audio {
+			appendAudioSourceConfiguration(e, "Configurations", s)
 		}
 	}
 	e.Append(`</trt:GetAudioSourceConfigurationsResponse>`)
 	return e.Bytes()
 }
 
-func appendAudioSourceConfiguration(e *Envelope, tag string, p *Profile) {
+func appendAudioSourceConfiguration(e *Envelope, tag string, s *VideoSource) {
+	// the audio input of a video source has the same token
 	e.Appendf(`<tt:%s token="%s">
 	<tt:Name>ASC</tt:Name>
 	<tt:UseCount>1</tt:UseCount>
 	<tt:SourceToken>%s</tt:SourceToken>
-</tt:%s>`, tag, p.Token, p.Token, tag)
+</tt:%s>`, tag, s.Token, s.Token, tag)
 }
 
 func GetAudioEncoderConfigurationsResponse(profiles []*Profile) []byte {

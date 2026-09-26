@@ -7,10 +7,8 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"sort"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/AlexxIT/go2rtc/internal/api"
@@ -43,12 +41,21 @@ func Init() {
 
 var log zerolog.Logger
 
-// Device is the identity of the ONVIF device that this server presents
+// Device is the ONVIF device that this server presents
 type Device struct {
 	Name         string `yaml:"name"`          // scope onvif://www.onvif.org/name/
 	Manufacturer string `yaml:"manufacturer"`  // GetDeviceInformation
 	Model        string `yaml:"model"`         // GetDeviceInformation and scope onvif://www.onvif.org/hardware/
 	SerialNumber string `yaml:"serial_number"` // GetDeviceInformation, the request host if empty
+
+	// VideoSources maps a video source token to the streams (profiles) that encode it.
+	// When set, only the listed streams are profiles; otherwise every stream is
+	// a profile with its own video source.
+	VideoSources map[string]VideoSource `yaml:"video_sources"`
+}
+
+type VideoSource struct {
+	Profiles []string `yaml:"profiles"` // highest quality first
 }
 
 var device = Device{Name: "go2rtc", Model: "go2rtc"}
@@ -144,24 +151,33 @@ func onvifDeviceService(w http.ResponseWriter, r *http.Request) {
 		onvif.MediaGetAudioEncoderConfigurations:
 		if b, err = mediaResponse(operation, b); err != nil {
 			// a fault instead of guessed values: clients keep what they know and retry
-			log.Warn().Err(err).Msgf("[onvif] %s", operation)
-			w.Header().Set("Content-Type", "application/soap+xml; charset=utf-8")
-			w.WriteHeader(http.StatusInternalServerError)
-			_, _ = w.Write(onvif.FaultResponse(err.Error()))
+			writeFault(w, operation, err)
 			return
 		}
 
 	case onvif.MediaGetStreamUri:
+		token := onvif.FindTagValue(b, "ProfileToken")
+		if !isProfile(token) {
+			writeFault(w, operation, errors.New("onvif: unknown profile "+token))
+			return
+		}
+
 		host, _, err := net.SplitHostPort(r.Host)
 		if err != nil {
 			host = r.Host // in case of Host without port
 		}
 
-		uri := "rtsp://" + host + ":" + rtsp.Port + "/" + onvif.FindTagValue(b, "ProfileToken")
+		uri := "rtsp://" + host + ":" + rtsp.Port + "/" + token
 		b = onvif.GetStreamUriResponse(uri)
 
 	case onvif.MediaGetSnapshotUri:
-		uri := "http://" + r.Host + "/api/frame.jpeg?src=" + onvif.FindTagValue(b, "ProfileToken")
+		token := onvif.FindTagValue(b, "ProfileToken")
+		if !isProfile(token) {
+			writeFault(w, operation, errors.New("onvif: unknown profile "+token))
+			return
+		}
+
+		uri := "http://" + r.Host + "/api/frame.jpeg?src=" + token
 		b = onvif.GetSnapshotUriResponse(uri)
 
 	default:
@@ -179,6 +195,13 @@ func onvifDeviceService(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func writeFault(w http.ResponseWriter, operation string, err error) {
+	log.Warn().Err(err).Msgf("[onvif] %s", operation)
+	w.Header().Set("Content-Type", "application/soap+xml; charset=utf-8")
+	w.WriteHeader(http.StatusInternalServerError)
+	_, _ = w.Write(onvif.FaultResponse(err.Error()))
+}
+
 // mediaResponse answers media requests that describe streams (profiles, sources, encoders)
 func mediaResponse(operation string, req []byte) ([]byte, error) {
 	switch operation {
@@ -190,11 +213,12 @@ func mediaResponse(operation string, req []byte) ([]byte, error) {
 		return onvif.GetProfileResponse(p), nil
 
 	case onvif.MediaGetVideoSourceConfiguration:
-		p, err := getProfile(onvif.FindTagValue(req, "ConfigurationToken"))
+		// video source token = video source configuration token
+		s, err := getVideoSource(onvif.FindTagValue(req, "ConfigurationToken"))
 		if err != nil {
 			return nil, err
 		}
-		return onvif.GetVideoSourceConfigurationResponse(p), nil
+		return onvif.GetVideoSourceConfigurationResponse(s), nil
 
 	case onvif.MediaGetVideoEncoderConfiguration:
 		p, err := getProfile(onvif.FindTagValue(req, "ConfigurationToken"))
@@ -239,31 +263,6 @@ func mediaResponse(operation string, req []byte) ([]byte, error) {
 	default: // MediaGetAudioEncoderConfigurations
 		return onvif.GetAudioEncoderConfigurationsResponse(profiles), nil
 	}
-}
-
-// getProfiles describes all streams, sorted by name for a stable profile order.
-// Any failure fails the whole list, so a client never sees a profile disappear.
-func getProfiles() ([]*onvif.Profile, error) {
-	names := streams.GetAllNames()
-	sort.Strings(names)
-
-	profiles := make([]*onvif.Profile, len(names))
-	errs := make([]error, len(names))
-
-	var wg sync.WaitGroup
-	for i, name := range names {
-		wg.Add(1)
-		go func() {
-			profiles[i], errs[i] = getProfile(name)
-			wg.Done()
-		}()
-	}
-	wg.Wait()
-
-	if err := errors.Join(errs...); err != nil {
-		return nil, err
-	}
-	return profiles, nil
 }
 
 func apiOnvif(w http.ResponseWriter, r *http.Request) {
