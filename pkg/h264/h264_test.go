@@ -72,6 +72,28 @@ func TestDecodeSPS(t *testing.T) {
 	require.Equal(t, uint16(360), sps.Height())
 }
 
+func TestSPSFrameRate(t *testing.T) {
+	tests := []struct {
+		name string
+		sps  string
+		fps  float64
+	}{
+		// num_units_in_tick=1 is stored with emulation prevention bytes
+		{"x264", "Z2QAKay0A8ARPyzcBAQFAAADAAEAAAMAPA8YMqA=", 30},
+		{"Hikvision", "Z00AKpWoHgCJ+WEAAAXcAAFfkAQ=", 30},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			b, err := base64.StdEncoding.DecodeString(test.sps)
+			require.Nil(t, err)
+
+			sps := DecodeSPS(b)
+			require.NotNil(t, sps)
+			require.Equal(t, test.fps, sps.FrameRate())
+		})
+	}
+}
+
 func TestGetProfileLevelID(t *testing.T) {
 	// OpenIPC https://github.com/OpenIPC
 	s := "profile-level-id=0033e7; packetization-mode=1; "
