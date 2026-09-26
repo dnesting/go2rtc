@@ -1,8 +1,11 @@
 package onvif
 
 import (
+	"encoding/base64"
+	"encoding/binary"
 	"encoding/xml"
 	"errors"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -14,6 +17,7 @@ import (
 	"github.com/AlexxIT/go2rtc/internal/streams"
 	"github.com/AlexxIT/go2rtc/pkg/core"
 	"github.com/AlexxIT/go2rtc/pkg/onvif"
+	"github.com/pion/rtp"
 	"github.com/stretchr/testify/require"
 )
 
@@ -287,4 +291,51 @@ func TestValidVideoSources(t *testing.T) {
 		{Token: "a", Profiles: []string{"s1"}},
 		{Token: "s4", Profiles: []string{"s4"}},
 	}, valid)
+}
+
+func avcc(nalus ...[]byte) []byte {
+	var b []byte
+	for _, nalu := range nalus {
+		b = binary.BigEndian.AppendUint32(b, uint32(len(nalu)))
+		b = append(b, nalu...)
+	}
+	return b
+}
+
+func closed(ch chan struct{}) bool {
+	select {
+	case <-ch:
+		return true
+	default:
+		return false
+	}
+}
+
+func TestVideoWatchFrameRate(t *testing.T) {
+	// Hikvision DVR H265 SPS: parameter sets in-band only, no VUI timing
+	sps, _ := base64.StdEncoding.DecodeString("QgEGIWAAAAMAAAMAAAMAAAMAewAAoAPAgBEHy7ve96clEVcqn1KS5uAgICAQ")
+	frame := []byte{0x02, 0x01, 0xAA} // non-IDR slice
+
+	w := newVideoWatch(&core.Codec{Name: core.CodecH265, ClockRate: 90000})
+	require.False(t, closed(w.params))
+
+	ts := uint32(math.MaxUint32 - 10000) // timestamps wrap around during the measurement
+	w.frame(&rtp.Packet{Header: rtp.Header{Timestamp: ts}, Payload: avcc(sps, frame)})
+	require.True(t, closed(w.params))
+	require.Contains(t, w.codec.FmtpLine, "sprop-sps=")
+
+	for i := 1; i < framesToMeasure; i++ {
+		require.False(t, closed(w.measured))
+		ts += 90000 / 12
+		w.frame(&rtp.Packet{Header: rtp.Header{Timestamp: ts}, Payload: avcc(frame)})
+	}
+	require.True(t, closed(w.measured))
+	require.InDelta(t, 12, w.frameRate(), 0.01)
+
+	// a frame rate declared in the SPS needs no measurement
+	w = newVideoWatch(&core.Codec{Name: core.CodecH264, ClockRate: 90000,
+		FmtpLine: "sprop-parameter-sets=Z00AKpWoHgCJ+WEAAAXcAAFfkAQ=,aO48gA=="})
+	require.True(t, closed(w.params))
+	require.True(t, closed(w.measured))
+	require.True(t, w.declared)
 }

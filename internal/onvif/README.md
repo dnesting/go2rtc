@@ -19,7 +19,7 @@ streams:
 
 A regular camera has a single video source (`GetVideoSources`) and two profiles (`GetProfiles`).
 
-By default, go2rtc has one video source and one profile per stream. Profiles report the stream's actual codec (H264 or H265), resolution and audio (AAC or G711). If a stream can't be probed, the server answers with a SOAP fault.
+By default, go2rtc has one video source and one profile per stream. Profiles report the stream's actual codec (H264 or H265), resolution, frame rate and audio (AAC or G711). The frame rate comes from the stream's SPS, or is measured from frame timestamps if the SPS doesn't declare one. If a stream can't be probed, the server answers with a SOAP fault.
 
 The device and its video sources can be set in the config. All fields are optional:
 

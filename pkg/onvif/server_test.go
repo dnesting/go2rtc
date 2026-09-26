@@ -11,10 +11,11 @@ import (
 
 func TestNewProfile(t *testing.T) {
 	tests := []struct {
-		name   string
-		codecs []*core.Codec
-		video  Video
-		audio  *Audio
+		name      string
+		codecs    []*core.Codec
+		frameRate float64
+		video     Video
+		audio     *Audio
 	}{
 		{
 			name:  "unknown",
@@ -43,10 +44,22 @@ func TestNewProfile(t *testing.T) {
 			codecs: []*core.Codec{{Name: core.CodecH265}},
 			video:  Video{Encoding: "H265", Profile: "Main", Width: 1920, Height: 1080, FrameRate: 30, Bitrate: 8192},
 		},
+		{
+			name:      "H265 with measured frame rate",
+			codecs:    []*core.Codec{{Name: core.CodecH265}},
+			frameRate: 11.96,
+			video:     Video{Encoding: "H265", Profile: "Main", Width: 1920, Height: 1080, FrameRate: 12, Bitrate: 8192},
+		},
+		{
+			name:      "declared frame rate wins",
+			codecs:    []*core.Codec{{Name: core.CodecH264, FmtpLine: "sprop-parameter-sets=Z00AKpWoHgCJ+WEAAAXcAAFfkAQ=,aO48gA=="}},
+			frameRate: 12,
+			video:     Video{Encoding: "H264", Profile: "Main", Width: 1920, Height: 1080, FrameRate: 30, Bitrate: 8192},
+		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			p := NewProfile("main", test.codecs)
+			p := NewProfile("main", test.codecs, test.frameRate)
 			require.Equal(t, "main", p.Token)
 			require.Equal(t, test.video, p.Video)
 			require.Equal(t, test.audio, p.Audio)
