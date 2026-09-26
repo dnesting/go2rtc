@@ -72,6 +72,18 @@ func TestDecodeSPS(t *testing.T) {
 	require.Equal(t, uint16(360), sps.Height())
 }
 
+func TestDecodeSPSEmulationPrevention(t *testing.T) {
+	// x264: num_units_in_tick = 1 is stored as 00 00 03 00 01
+	s := "Z2QAKay0A8ARPyzcBAQFAAADAAEAAAMAPA8YMqA="
+	b, err := base64.StdEncoding.DecodeString(s)
+	require.Nil(t, err)
+
+	// ffmpeg -bsf:v trace_headers: num_units_in_tick = 1, time_scale = 60
+	sps := DecodeSPS(b)
+	require.Equal(t, uint32(1), sps.num_units_in_tick)
+	require.Equal(t, uint32(60), sps.time_scale)
+}
+
 func TestGetProfileLevelID(t *testing.T) {
 	// OpenIPC https://github.com/OpenIPC
 	s := "profile-level-id=0033e7; packetization-mode=1; "

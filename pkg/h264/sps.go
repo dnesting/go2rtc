@@ -1,6 +1,7 @@
 package h264
 
 import (
+	"bytes"
 	"fmt"
 
 	"github.com/AlexxIT/go2rtc/pkg/bits"
@@ -90,7 +91,10 @@ func (s *SPS) Height() uint16 {
 func DecodeSPS(sps []byte) *SPS {
 	// https://developer.ridgerun.com/wiki/index.php/H264_Analysis_Tools
 	// ffmpeg -i file.h264 -c copy -bsf:v trace_headers -f null -
-	r := bits.NewReader(sps)
+
+	// remove emulation prevention bytes (00 00 03 => 00 00)
+	rbsp := bytes.ReplaceAll(sps, []byte{0, 0, 3}, []byte{0, 0})
+	r := bits.NewReader(rbsp)
 
 	hdr := r.ReadByte()
 	if hdr&0x1F != NALUTypeSPS {
