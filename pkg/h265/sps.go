@@ -29,14 +29,30 @@ type SPS struct {
 
 	pic_width_in_luma_samples  uint32
 	pic_height_in_luma_samples uint32
+
+	conformance_window_flag byte
+	conf_win_left_offset    uint32
+	conf_win_right_offset   uint32
+	conf_win_top_offset     uint32
+	conf_win_bottom_offset  uint32
 }
 
 func (s *SPS) Width() uint16 {
-	return uint16(s.pic_width_in_luma_samples)
+	// SubWidthC: 2 for 4:2:0 and 4:2:2, 1 otherwise
+	crop := s.conf_win_left_offset + s.conf_win_right_offset
+	if s.chroma_format_idc == 1 || s.chroma_format_idc == 2 {
+		crop *= 2
+	}
+	return uint16(s.pic_width_in_luma_samples - crop)
 }
 
 func (s *SPS) Height() uint16 {
-	return uint16(s.pic_height_in_luma_samples)
+	// SubHeightC: 2 for 4:2:0, 1 otherwise
+	crop := s.conf_win_top_offset + s.conf_win_bottom_offset
+	if s.chroma_format_idc == 1 {
+		crop *= 2
+	}
+	return uint16(s.pic_height_in_luma_samples - crop)
 }
 
 func DecodeSPS(nalu []byte) *SPS {
@@ -61,6 +77,14 @@ func DecodeSPS(nalu []byte) *SPS {
 
 	s.pic_width_in_luma_samples = r.ReadUEGolomb()
 	s.pic_height_in_luma_samples = r.ReadUEGolomb()
+
+	s.conformance_window_flag = r.ReadBit()
+	if s.conformance_window_flag != 0 {
+		s.conf_win_left_offset = r.ReadUEGolomb()
+		s.conf_win_right_offset = r.ReadUEGolomb()
+		s.conf_win_top_offset = r.ReadUEGolomb()
+		s.conf_win_bottom_offset = r.ReadUEGolomb()
+	}
 
 	//...
 
