@@ -19,7 +19,19 @@ streams:
 
 A regular camera has a single video source (`GetVideoSources`) and two profiles (`GetProfiles`).
 
-Go2rtc has one video source and one profile per stream.
+Go2rtc has one video source and one profile per stream. Profiles report the stream's actual codec (H264 or H265), resolution and audio (AAC or G711). If a stream can't be probed, the server answers with a SOAP fault.
+
+The device identity can be set in the config. All fields are optional:
+
+```yaml
+onvif:
+  name: Front Door               # scope onvif://www.onvif.org/name/ (default: go2rtc)
+  manufacturer: Hikvision        # GetDeviceInformation
+  model: DS-2CD2143G2 (go2rtc)   # GetDeviceInformation and scope onvif://www.onvif.org/hardware/ (default: go2rtc)
+  serial_number: ABC123          # GetDeviceInformation (default: the requested host)
+```
+
+UniFi Protect names a new camera `manufacturer + " " + model` and derives its MAC address from `serial_number`.
 
 ## Tested clients
 

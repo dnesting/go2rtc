@@ -133,3 +133,23 @@ func TestProfileResponses(t *testing.T) {
 		require.NoError(t, xml.Unmarshal(b, new(any)))
 	}
 }
+
+func TestDeviceResponses(t *testing.T) {
+	var info struct {
+		Manufacturer string `xml:"Body>GetDeviceInformationResponse>Manufacturer"`
+		Model        string `xml:"Body>GetDeviceInformationResponse>Model"`
+		SerialNumber string `xml:"Body>GetDeviceInformationResponse>SerialNumber"`
+	}
+	b := GetDeviceInformationResponse("A&B", "M <1>", "1.0", "SN1")
+	require.NoError(t, xml.Unmarshal(b, &info))
+	require.Equal(t, "A&B", info.Manufacturer)
+	require.Equal(t, "M <1>", info.Model)
+	require.Equal(t, "SN1", info.SerialNumber)
+
+	var scopes struct {
+		Items []string `xml:"Body>GetScopesResponse>Scopes>ScopeItem"`
+	}
+	require.NoError(t, xml.Unmarshal(GetScopesResponse("Front Entry & Lobby", "TA-HDTVI516-AS (go2rtc)"), &scopes))
+	require.Contains(t, scopes.Items, "onvif://www.onvif.org/name/Front%20Entry%20&%20Lobby")
+	require.Contains(t, scopes.Items, "onvif://www.onvif.org/hardware/TA-HDTVI516-AS%20%28go2rtc%29")
+}

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"html"
+	"net/url"
 	"regexp"
 	"time"
 )
@@ -131,7 +132,25 @@ func GetDeviceInformationResponse(manuf, model, firmware, serial string) []byte 
 	<tds:FirmwareVersion>%s</tds:FirmwareVersion>
 	<tds:SerialNumber>%s</tds:SerialNumber>
 	<tds:HardwareId>1.00</tds:HardwareId>
-</tds:GetDeviceInformationResponse>`, manuf, model, firmware, serial)
+</tds:GetDeviceInformationResponse>`,
+		html.EscapeString(manuf), html.EscapeString(model), html.EscapeString(firmware), html.EscapeString(serial))
+	return e.Bytes()
+}
+
+// GetScopesResponse returns the fixed device scopes, with the name and hardware scopes
+func GetScopesResponse(name, hardware string) []byte {
+	e := NewEnvelope()
+	e.Append(`<tds:GetScopesResponse>`)
+	for _, scope := range []string{
+		"onvif://www.onvif.org/name/" + url.PathEscape(name),
+		"onvif://www.onvif.org/hardware/" + url.PathEscape(hardware),
+		"onvif://www.onvif.org/location/github",
+		"onvif://www.onvif.org/Profile/Streaming",
+		"onvif://www.onvif.org/type/Network_Video_Transmitter",
+	} {
+		e.Append(`<tds:Scopes><tt:ScopeDef>Fixed</tt:ScopeDef><tt:ScopeItem>`, html.EscapeString(scope), `</tt:ScopeItem></tds:Scopes>`)
+	}
+	e.Append(`</tds:GetScopesResponse>`)
 	return e.Bytes()
 }
 
@@ -374,10 +393,4 @@ var responses = map[string]string{
 
 	DeviceGetNetworkInterfaces: `<tds:GetNetworkInterfacesResponse />`,
 	DeviceGetNetworkProtocols:  `<tds:GetNetworkProtocolsResponse />`,
-	DeviceGetScopes: `<tds:GetScopesResponse>
-	<tds:Scopes><tt:ScopeDef>Fixed</tt:ScopeDef><tt:ScopeItem>onvif://www.onvif.org/name/go2rtc</tt:ScopeItem></tds:Scopes>
-	<tds:Scopes><tt:ScopeDef>Fixed</tt:ScopeDef><tt:ScopeItem>onvif://www.onvif.org/location/github</tt:ScopeItem></tds:Scopes>
-	<tds:Scopes><tt:ScopeDef>Fixed</tt:ScopeDef><tt:ScopeItem>onvif://www.onvif.org/Profile/Streaming</tt:ScopeItem></tds:Scopes>
-	<tds:Scopes><tt:ScopeDef>Fixed</tt:ScopeDef><tt:ScopeItem>onvif://www.onvif.org/type/Network_Video_Transmitter</tt:ScopeItem></tds:Scopes>
-</tds:GetScopesResponse>`,
 }

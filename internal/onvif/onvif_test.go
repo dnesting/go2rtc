@@ -99,3 +99,34 @@ func TestMediaFault(t *testing.T) {
 	require.Equal(t, http.StatusInternalServerError, w.Code)
 	require.Contains(t, w.Body.String(), "<s:Fault")
 }
+
+func request(t *testing.T, host, operation string) string {
+	body := `<s:Envelope xmlns:s="http://www.w3.org/2003/05/soap-envelope"><s:Body><` + operation + ` xmlns="http://www.onvif.org/ver10/device/wsdl"/></s:Body></s:Envelope>`
+	r := httptest.NewRequest("POST", "/onvif/device_service", strings.NewReader(body))
+	r.Host = host
+	w := httptest.NewRecorder()
+	onvifDeviceService(w, r)
+	require.Equal(t, http.StatusOK, w.Code)
+	return w.Body.String()
+}
+
+func TestDeviceIdentity(t *testing.T) {
+	// defaults
+	b := request(t, "10.0.0.1", "GetDeviceInformation")
+	require.Contains(t, b, "<tds:Model>go2rtc</tds:Model>")
+	require.Contains(t, b, "<tds:SerialNumber>10.0.0.1</tds:SerialNumber>")
+	require.Contains(t, request(t, "10.0.0.1", "GetScopes"), "onvif://www.onvif.org/name/go2rtc<")
+
+	defaults := device
+	t.Cleanup(func() { device = defaults })
+	device = Device{Name: "front entry", Manufacturer: "hikvision", Model: "TA-HDTVI516-AS", SerialNumber: "SN-ch01"}
+
+	b = request(t, "10.0.0.1", "GetDeviceInformation")
+	require.Contains(t, b, "<tds:Manufacturer>hikvision</tds:Manufacturer>")
+	require.Contains(t, b, "<tds:Model>TA-HDTVI516-AS</tds:Model>")
+	require.Contains(t, b, "<tds:SerialNumber>SN-ch01</tds:SerialNumber>")
+
+	b = request(t, "10.0.0.1", "GetScopes")
+	require.Contains(t, b, "onvif://www.onvif.org/name/front%20entry<")
+	require.Contains(t, b, "onvif://www.onvif.org/hardware/TA-HDTVI516-AS<")
+}

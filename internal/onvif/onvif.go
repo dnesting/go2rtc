@@ -23,6 +23,13 @@ import (
 )
 
 func Init() {
+	var cfg struct {
+		Mod Device `yaml:"onvif"`
+	}
+	cfg.Mod = device // defaults
+	app.LoadConfig(&cfg)
+	device = cfg.Mod
+
 	log = app.GetLogger("onvif")
 
 	streams.HandleFunc("onvif", streamOnvif)
@@ -35,6 +42,16 @@ func Init() {
 }
 
 var log zerolog.Logger
+
+// Device is the identity of the ONVIF device that this server presents
+type Device struct {
+	Name         string `yaml:"name"`          // scope onvif://www.onvif.org/name/
+	Manufacturer string `yaml:"manufacturer"`  // GetDeviceInformation
+	Model        string `yaml:"model"`         // GetDeviceInformation and scope onvif://www.onvif.org/hardware/
+	SerialNumber string `yaml:"serial_number"` // GetDeviceInformation, the request host if empty
+}
+
+var device = Device{Name: "go2rtc", Model: "go2rtc"}
 
 func streamOnvif(rawURL string) (core.Producer, error) {
 	client, err := onvif.NewClient(rawURL)
@@ -86,9 +103,11 @@ func onvifDeviceService(w http.ResponseWriter, r *http.Request) {
 		onvif.DeviceGetHostname,
 		onvif.DeviceGetNetworkDefaultGateway,
 		onvif.DeviceGetNetworkProtocols,
-		onvif.DeviceGetNTP,
-		onvif.DeviceGetScopes:
+		onvif.DeviceGetNTP:
 		b = onvif.StaticResponse(operation)
+
+	case onvif.DeviceGetScopes:
+		b = onvif.GetScopesResponse(device.Name, device.Model)
 
 	case onvif.DeviceGetCapabilities:
 		// important for Hass: Media section
@@ -99,7 +118,11 @@ func onvifDeviceService(w http.ResponseWriter, r *http.Request) {
 
 	case onvif.DeviceGetDeviceInformation:
 		// important for Hass: SerialNumber (unique server ID)
-		b = onvif.GetDeviceInformationResponse("", "go2rtc", app.Version, r.Host)
+		serial := device.SerialNumber
+		if serial == "" {
+			serial = r.Host
+		}
+		b = onvif.GetDeviceInformationResponse(device.Manufacturer, device.Model, app.Version, serial)
 
 	case onvif.DeviceSystemReboot:
 		b = onvif.StaticResponse(operation)

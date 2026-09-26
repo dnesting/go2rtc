@@ -481,6 +481,29 @@
         }
       }
     },
+    "onvif": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "description": "Device name, as scope `onvif://www.onvif.org/name/`",
+          "type": "string",
+          "default": "go2rtc"
+        },
+        "manufacturer": {
+          "description": "Manufacturer in GetDeviceInformation",
+          "type": "string"
+        },
+        "model": {
+          "description": "Model in GetDeviceInformation, and scope `onvif://www.onvif.org/hardware/`",
+          "type": "string",
+          "default": "go2rtc"
+        },
+        "serial_number": {
+          "description": "SerialNumber in GetDeviceInformation; defaults to the requested host",
+          "type": "string"
+        }
+      }
+    },
     "preload": {
       "description": "Preload streams on startup (map stream name => probe query, default `video&audio`)",
       "type": "object",
