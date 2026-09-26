@@ -128,6 +128,7 @@ func TestProfileResponses(t *testing.T) {
 		GetAudioSourcesResponse([]*Profile{main, sub}),
 		GetAudioSourceConfigurationsResponse([]*Profile{main, sub}),
 		GetAudioEncoderConfigurationsResponse([]*Profile{main, sub}),
+		FaultResponse("probe <main>: timeout"),
 	} {
 		require.NoError(t, xml.Unmarshal(b, new(any)))
 	}

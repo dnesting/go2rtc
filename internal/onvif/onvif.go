@@ -1,6 +1,7 @@
 package onvif
 
 import (
+	"errors"
 	"io"
 	"net"
 	"net/http"
@@ -107,48 +108,25 @@ func onvifDeviceService(w http.ResponseWriter, r *http.Request) {
 			os.Exit(0)
 		})
 
-	case onvif.MediaGetVideoSources:
-		b = onvif.GetVideoSourcesResponse(getProfiles())
-
-	case onvif.MediaGetProfiles:
-		// important for Hass: H264 codec, width, height
-		b = onvif.GetProfilesResponse(getProfiles())
-
-	case onvif.MediaGetProfile:
-		token := onvif.FindTagValue(b, "ProfileToken")
-		b = onvif.GetProfileResponse(getProfile(token))
-
-	case onvif.MediaGetVideoSourceConfigurations:
-		// important for Happytime Onvif Client
-		b = onvif.GetVideoSourceConfigurationsResponse(getProfiles())
-
-	case onvif.MediaGetVideoSourceConfiguration:
-		token := onvif.FindTagValue(b, "ConfigurationToken")
-		b = onvif.GetVideoSourceConfigurationResponse(getProfile(token))
-
-	case onvif.MediaGetVideoEncoderConfigurations:
-		b = onvif.GetVideoEncoderConfigurationsResponse(getProfiles())
-
-	case onvif.MediaGetVideoEncoderConfiguration:
-		token := onvif.FindTagValue(b, "ConfigurationToken")
-		b = onvif.GetVideoEncoderConfigurationResponse(getProfile(token))
-
-	case onvif.MediaGetVideoEncoderConfigurationOptions:
-		// profile token and encoder configuration token are the same
-		token := onvif.FindTagValue(b, "ProfileToken")
-		if token == "" {
-			token = onvif.FindTagValue(b, "ConfigurationToken")
+	case onvif.MediaGetVideoSources,
+		onvif.MediaGetProfiles,
+		onvif.MediaGetProfile,
+		onvif.MediaGetVideoSourceConfigurations,
+		onvif.MediaGetVideoSourceConfiguration,
+		onvif.MediaGetVideoEncoderConfigurations,
+		onvif.MediaGetVideoEncoderConfiguration,
+		onvif.MediaGetVideoEncoderConfigurationOptions,
+		onvif.MediaGetAudioSources,
+		onvif.MediaGetAudioSourceConfigurations,
+		onvif.MediaGetAudioEncoderConfigurations:
+		if b, err = mediaResponse(operation, b); err != nil {
+			// a fault instead of guessed values: clients keep what they know and retry
+			log.Warn().Err(err).Msgf("[onvif] %s", operation)
+			w.Header().Set("Content-Type", "application/soap+xml; charset=utf-8")
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = w.Write(onvif.FaultResponse(err.Error()))
+			return
 		}
-		b = onvif.GetVideoEncoderConfigurationOptionsResponse(getProfile(token))
-
-	case onvif.MediaGetAudioSources:
-		b = onvif.GetAudioSourcesResponse(getProfiles())
-
-	case onvif.MediaGetAudioSourceConfigurations:
-		b = onvif.GetAudioSourceConfigurationsResponse(getProfiles())
-
-	case onvif.MediaGetAudioEncoderConfigurations:
-		b = onvif.GetAudioEncoderConfigurationsResponse(getProfiles())
 
 	case onvif.MediaGetStreamUri:
 		host, _, err := net.SplitHostPort(r.Host)
@@ -178,24 +156,91 @@ func onvifDeviceService(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// mediaResponse answers media requests that describe streams (profiles, sources, encoders)
+func mediaResponse(operation string, req []byte) ([]byte, error) {
+	switch operation {
+	case onvif.MediaGetProfile:
+		p, err := getProfile(onvif.FindTagValue(req, "ProfileToken"))
+		if err != nil {
+			return nil, err
+		}
+		return onvif.GetProfileResponse(p), nil
+
+	case onvif.MediaGetVideoSourceConfiguration:
+		p, err := getProfile(onvif.FindTagValue(req, "ConfigurationToken"))
+		if err != nil {
+			return nil, err
+		}
+		return onvif.GetVideoSourceConfigurationResponse(p), nil
+
+	case onvif.MediaGetVideoEncoderConfiguration:
+		p, err := getProfile(onvif.FindTagValue(req, "ConfigurationToken"))
+		if err != nil {
+			return nil, err
+		}
+		return onvif.GetVideoEncoderConfigurationResponse(p), nil
+
+	case onvif.MediaGetVideoEncoderConfigurationOptions:
+		// profile token and encoder configuration token are the same
+		token := onvif.FindTagValue(req, "ProfileToken")
+		if token == "" {
+			token = onvif.FindTagValue(req, "ConfigurationToken")
+		}
+		p, err := getProfile(token)
+		if err != nil {
+			return nil, err
+		}
+		return onvif.GetVideoEncoderConfigurationOptionsResponse(p), nil
+	}
+
+	profiles, err := getProfiles()
+	if err != nil {
+		return nil, err
+	}
+
+	switch operation {
+	case onvif.MediaGetVideoSources:
+		return onvif.GetVideoSourcesResponse(profiles), nil
+	case onvif.MediaGetProfiles:
+		// important for Hass: H264 codec, width, height
+		return onvif.GetProfilesResponse(profiles), nil
+	case onvif.MediaGetVideoSourceConfigurations:
+		// important for Happytime Onvif Client
+		return onvif.GetVideoSourceConfigurationsResponse(profiles), nil
+	case onvif.MediaGetVideoEncoderConfigurations:
+		return onvif.GetVideoEncoderConfigurationsResponse(profiles), nil
+	case onvif.MediaGetAudioSources:
+		return onvif.GetAudioSourcesResponse(profiles), nil
+	case onvif.MediaGetAudioSourceConfigurations:
+		return onvif.GetAudioSourceConfigurationsResponse(profiles), nil
+	default: // MediaGetAudioEncoderConfigurations
+		return onvif.GetAudioEncoderConfigurationsResponse(profiles), nil
+	}
+}
+
 // getProfiles describes all streams, sorted by name for a stable profile order.
-func getProfiles() []*onvif.Profile {
+// Any failure fails the whole list, so a client never sees a profile disappear.
+func getProfiles() ([]*onvif.Profile, error) {
 	names := streams.GetAllNames()
 	sort.Strings(names)
 
 	profiles := make([]*onvif.Profile, len(names))
+	errs := make([]error, len(names))
 
 	var wg sync.WaitGroup
 	for i, name := range names {
 		wg.Add(1)
 		go func() {
-			profiles[i] = getProfile(name)
+			profiles[i], errs[i] = getProfile(name)
 			wg.Done()
 		}()
 	}
 	wg.Wait()
 
-	return profiles
+	if err := errors.Join(errs...); err != nil {
+		return nil, err
+	}
+	return profiles, nil
 }
 
 func apiOnvif(w http.ResponseWriter, r *http.Request) {

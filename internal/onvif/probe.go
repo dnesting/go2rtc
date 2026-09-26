@@ -3,6 +3,8 @@ package onvif
 import (
 	"encoding/base64"
 	"encoding/binary"
+	"errors"
+	"fmt"
 	"net/url"
 	"sync"
 	"time"
@@ -15,35 +17,70 @@ import (
 	"github.com/pion/rtp"
 )
 
-// keyframeTimeout limits how long a probe waits for in-band parameter sets
-const keyframeTimeout = 5 * time.Second
+// probeTimeout keeps a probe under UniFi Protect's 10 second request timeout
+var probeTimeout = 8 * time.Second
+
+// probeRetryDelay is the pause before retrying a source that failed to connect
+var probeRetryDelay = time.Second
 
 // getProfile describes a stream from the codecs its source provides.
 // A running source answers immediately; an idle source is connected for the probe.
 // When the SDP has no video parameter sets, the probe waits for them in the bitstream.
-func getProfile(name string) *onvif.Profile {
+// It returns an error rather than guessing when the stream can't be described in time.
+func getProfile(name string) (*onvif.Profile, error) {
 	stream := streams.Get(name)
 	if stream == nil {
-		return onvif.NewProfile(name, nil)
+		return nil, errors.New("onvif: unknown profile " + name)
 	}
 
-	cons := newProber()
-	if err := stream.AddConsumer(cons); err != nil {
-		log.Debug().Err(err).Str("stream", name).Msg("[onvif] probe")
-		return onvif.NewProfile(name, nil)
-	}
-
-	if cons.wait {
-		select {
-		case <-cons.done:
-		case <-time.After(keyframeTimeout):
-			log.Debug().Str("stream", name).Msg("[onvif] probe: no video parameters")
+	deadline := time.Now().Add(probeTimeout)
+	for {
+		codecs, err := probe(stream, deadline)
+		if err == nil {
+			return onvif.NewProfile(name, codecs), nil
 		}
+		if time.Until(deadline) < probeRetryDelay {
+			return nil, fmt.Errorf("onvif: probe %s: %w", name, err)
+		}
+		log.Debug().Err(err).Str("stream", name).Msg("[onvif] probe retry")
+		time.Sleep(probeRetryDelay)
 	}
+}
 
-	stream.RemoveConsumer(cons)
+// probe attaches a prober to the stream until the codecs are known or the deadline passes.
+// The prober is removed from the stream even if the caller has already given up.
+func probe(stream *streams.Stream, deadline time.Time) ([]*core.Codec, error) {
+	type result struct {
+		codecs []*core.Codec
+		err    error
+	}
+	ch := make(chan result, 1)
 
-	return onvif.NewProfile(name, cons.Codecs())
+	go func() {
+		cons := newProber()
+		if err := stream.AddConsumer(cons); err != nil {
+			ch <- result{err: err}
+			return
+		}
+		defer stream.RemoveConsumer(cons)
+
+		if cons.wait {
+			select {
+			case <-cons.done:
+			case <-time.After(time.Until(deadline)):
+				ch <- result{err: errors.New("no video parameter sets")}
+				return
+			}
+		}
+		ch <- result{codecs: cons.Codecs()}
+	}()
+
+	select {
+	case r := <-ch:
+		return r.codecs, r.err
+	case <-time.After(time.Until(deadline)):
+		return nil, errors.New("timeout")
+	}
 }
 
 type prober struct {
