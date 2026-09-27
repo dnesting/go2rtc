@@ -123,6 +123,23 @@ func (c *Codec) Clone() *Codec {
 	return &clone
 }
 
+// SetFmtp returns fmtp with the parameter key set to value,
+// keeping the other parameters and their order.
+func SetFmtp(fmtp, key, value string) string {
+	param := key + "=" + value
+	if fmtp == "" {
+		return param
+	}
+	params := strings.Split(fmtp, ";")
+	for i, s := range params {
+		if k, _, _ := strings.Cut(strings.TrimSpace(s), "="); k == key {
+			params[i] = param
+			return strings.Join(params, ";")
+		}
+	}
+	return fmtp + ";" + param
+}
+
 func (c *Codec) Match(remote *Codec) bool {
 	switch remote.Name {
 	case CodecAll, CodecAny:

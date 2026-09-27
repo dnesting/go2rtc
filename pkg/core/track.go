@@ -1,13 +1,35 @@
 package core
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
+	"sync"
+	"sync/atomic"
+	"time"
 
 	"github.com/pion/rtp"
 )
 
 var ErrCantGetTrack = errors.New("can't get track")
+
+// CodecWatcher is fed the packets of a receiver whose codec lacks information
+// that the stream carries in-band (e.g. H264/H265 parameter sets). It returns
+// a completed copy of the codec once it has found that information, nil until then.
+type CodecWatcher func(packet *Packet) *Codec
+
+var codecWatchers = map[string]func(codec *Codec) CodecWatcher{}
+
+// RegisterCodecWatcher sets the function that NewReceiver calls for codecs
+// with this name. The function returns nil if the codec is already complete.
+// Call it from init().
+func RegisterCodecWatcher(name string, newWatcher func(codec *Codec) CodecWatcher) {
+	codecWatchers[name] = newWatcher
+}
+
+// codecWatchTimeout - how long a receiver looks for missing codec information
+// after its first packet
+var codecWatchTimeout = 2 * ProbeTimeout
 
 type Receiver struct {
 	Node
@@ -19,6 +41,13 @@ type Receiver struct {
 
 	Bytes   int `json:"bytes,omitempty"`
 	Packets int `json:"packets,omitempty"`
+
+	watch     CodecWatcher // used only from Input
+	watchEnd  time.Time
+	codec     atomic.Pointer[Codec] // Codec completed from the stream
+	ready     chan struct{}         // closed when watching is over
+	closed    chan struct{}
+	closeOnce sync.Once
 }
 
 func NewReceiver(media *Media, codec *Codec) *Receiver {
@@ -26,14 +55,64 @@ func NewReceiver(media *Media, codec *Codec) *Receiver {
 		Node:  Node{id: NewID(), Codec: codec},
 		Media: media,
 	}
+	if newWatcher := codecWatchers[codec.Name]; newWatcher != nil {
+		if r.watch = newWatcher(codec); r.watch != nil {
+			r.ready = make(chan struct{})
+			r.closed = make(chan struct{})
+		}
+	}
 	r.Input = func(packet *Packet) {
 		r.Bytes += len(packet.Payload)
 		r.Packets++
+		if r.watch != nil {
+			r.watchCodec(packet)
+		}
 		for _, child := range r.childs {
 			child.Input(packet)
 		}
 	}
 	return r
+}
+
+func (r *Receiver) watchCodec(packet *Packet) {
+	if codec := r.watch(packet); codec != nil {
+		r.codec.Store(codec)
+	} else if now := time.Now(); r.watchEnd.IsZero() {
+		r.watchEnd = now.Add(codecWatchTimeout)
+		return
+	} else if now.Before(r.watchEnd) {
+		return
+	}
+	r.watch = nil
+	close(r.ready)
+}
+
+// WaitCodec returns r.Codec, completed with information from the stream
+// (e.g. H264/H265 parameter sets) if the source didn't declare it.
+// It returns once the information is found, the receiver gives up looking,
+// ctx is done, ProbeTimeout passes or the receiver closes.
+// Never nil: without the information it returns r.Codec.
+// The returned codec must not be modified.
+func (r *Receiver) WaitCodec(ctx context.Context) *Codec {
+	if r.ready != nil {
+		timer := time.NewTimer(ProbeTimeout)
+		defer timer.Stop()
+
+		select {
+		case <-r.ready:
+		case <-r.closed:
+		case <-ctx.Done():
+		case <-timer.C:
+		}
+	}
+	return r.currentCodec()
+}
+
+func (r *Receiver) currentCodec() *Codec {
+	if codec := r.codec.Load(); codec != nil {
+		return codec
+	}
+	return r.Codec
 }
 
 // Deprecated: should be removed
@@ -56,6 +135,9 @@ func (r *Receiver) Replace(target *Receiver) {
 }
 
 func (r *Receiver) Close() {
+	if r.closed != nil {
+		r.closeOnce.Do(func() { close(r.closed) })
+	}
 	r.Node.Close()
 }
 
@@ -185,7 +267,7 @@ func (r *Receiver) MarshalJSON() ([]byte, error) {
 		Packets int      `json:"packets,omitempty"`
 	}{
 		ID:      r.Node.id,
-		Codec:   r.Node.Codec,
+		Codec:   r.currentCodec(),
 		Bytes:   r.Bytes,
 		Packets: r.Packets,
 	}
