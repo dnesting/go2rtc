@@ -109,6 +109,8 @@ func handlerMP4(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	cons.WaitCodecs(r.Context())
+
 	if rotate := query.Get("rotate"); rotate != "" {
 		cons.Rotate = core.Atoi(rotate)
 	}

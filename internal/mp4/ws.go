@@ -31,6 +31,8 @@ func handlerWSMSE(tr *ws.Transport, msg *ws.Message) error {
 		return err
 	}
 
+	cons.WaitCodecs(tr.Request.Context())
+
 	tr.Write(&ws.Message{Type: "mse", Value: mp4.ContentType(cons.Codecs())})
 
 	go cons.WriteTo(tr.Writer())

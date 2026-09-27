@@ -77,6 +77,10 @@ func handlerStream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if c, ok := cons.(*mp4.Consumer); ok {
+		c.WaitCodecs(r.Context())
+	}
+
 	session := NewSession(cons)
 	session.alive = time.AfterFunc(keepalive, func() {
 		sessionsMu.Lock()

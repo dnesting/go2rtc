@@ -1,6 +1,7 @@
 package mp4
 
 import (
+	"context"
 	"errors"
 	"io"
 	"sync"
@@ -15,10 +16,11 @@ import (
 
 type Consumer struct {
 	core.Connection
-	wr    *core.WriteBuffer
-	muxer *Muxer
-	mu    sync.Mutex
-	start bool
+	wr     *core.WriteBuffer
+	muxer  *Muxer
+	tracks []*core.Receiver
+	mu     sync.Mutex
+	start  bool
 
 	Rotate int `json:"-"`
 	ScaleX int `json:"-"`
@@ -157,11 +159,33 @@ func (c *Consumer) AddTrack(media *core.Media, _ *core.Codec, track *core.Receiv
 	}
 
 	c.muxer.AddTrack(codec)
+	c.tracks = append(c.tracks, track)
 
 	handler.HandleRTP(track)
 	c.Senders = append(c.Senders, handler)
 
 	return nil
+}
+
+// WaitCodecs waits for the video tracks' parameter sets if the source
+// doesn't declare them (see core.Receiver.WaitCodec) and uses them
+// for Codecs and the init segment. Call it after the consumer is added
+// to a stream and before Codecs or WriteTo.
+func (c *Consumer) WaitCodecs(ctx context.Context) {
+	for i, track := range c.tracks {
+		if codec := track.WaitCodec(ctx); codec != track.Codec {
+			c.mu.Lock()
+			c.muxer.codecs[i] = codec
+			c.mu.Unlock()
+		}
+	}
+}
+
+// Codecs returns the codecs of the MP4 tracks
+func (c *Consumer) Codecs() []*core.Codec {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]*core.Codec(nil), c.muxer.codecs...)
 }
 
 func (c *Consumer) WriteTo(wr io.Writer) (int64, error) {

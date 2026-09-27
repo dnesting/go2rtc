@@ -29,6 +29,8 @@ func handlerWSHLS(tr *ws.Transport, msg *ws.Message) error {
 		return err
 	}
 
+	cons.WaitCodecs(tr.Request.Context())
+
 	session := NewSession(cons)
 
 	session.alive = time.AfterFunc(keepalive, func() {

@@ -55,9 +55,21 @@ func (c *Keyframe) AddTrack(media *core.Media, _ *core.Codec, track *core.Receiv
 
 	switch track.Codec.Name {
 	case core.CodecH264:
+		sps, pps := h264.GetParameterSet(track.Codec.FmtpLine)
+		needPS := len(sps) == 0 || len(pps) == 0
+
 		handler.Handler = func(packet *rtp.Packet) {
 			if !h264.IsKeyframe(packet.Payload) {
 				return
+			}
+
+			// source without parameter sets in its codec: take them from the keyframe
+			if needPS {
+				codec := h264.AVCCToCodec(packet.Payload)
+				if sps, pps = h264.GetParameterSet(codec.FmtpLine); len(sps) > 0 && len(pps) > 0 {
+					init = c.rebuildInit(codec)
+					needPS = false
+				}
 			}
 
 			// important to use Mutex because right fragment order
@@ -75,9 +87,21 @@ func (c *Keyframe) AddTrack(media *core.Media, _ *core.Codec, track *core.Receiv
 		}
 
 	case core.CodecH265:
+		vps, sps, pps := h265.GetParameterSet(track.Codec.FmtpLine)
+		needPS := len(vps) == 0 || len(sps) == 0 || len(pps) == 0
+
 		handler.Handler = func(packet *rtp.Packet) {
 			if !h265.IsKeyframe(packet.Payload) {
 				return
+			}
+
+			// source without parameter sets in its codec: take them from the keyframe
+			if needPS {
+				codec := h265.AVCCToCodec(packet.Payload)
+				if vps, sps, pps = h265.GetParameterSet(codec.FmtpLine); len(vps) > 0 && len(sps) > 0 && len(pps) > 0 {
+					init = c.rebuildInit(codec)
+					needPS = false
+				}
 			}
 
 			// important to use Mutex because right fragment order
@@ -97,6 +121,12 @@ func (c *Keyframe) AddTrack(media *core.Media, _ *core.Codec, track *core.Receiv
 	c.Senders = append(c.Senders, handler)
 
 	return nil
+}
+
+func (c *Keyframe) rebuildInit(codec *core.Codec) []byte {
+	c.muxer.codecs[0] = codec
+	init, _ := c.muxer.GetInit()
+	return init
 }
 
 func (c *Keyframe) WriteTo(wr io.Writer) (int64, error) {
