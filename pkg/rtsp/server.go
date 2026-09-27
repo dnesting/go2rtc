@@ -2,6 +2,7 @@ package rtsp
 
 import (
 	"bufio"
+	"context"
 	"errors"
 	"fmt"
 	"net"
@@ -127,10 +128,20 @@ func (c *Conn) Accept() error {
 			// convert tracks to real output medias medias
 			var medias []*core.Media
 			for i, track := range c.Senders {
+				codec := track.Codec
+				// wait for parameter sets if the source doesn't declare them
+				if i < len(c.sources) {
+					source := c.sources[i]
+					if completed := source.WaitCodec(context.Background()); completed != source.Codec {
+						codec = completed.Clone()
+						codec.PayloadType = track.Codec.PayloadType
+					}
+				}
+
 				media := &core.Media{
-					Kind:      core.GetKind(track.Codec.Name),
+					Kind:      core.GetKind(codec.Name),
 					Direction: core.DirectionRecvonly,
-					Codecs:    []*core.Codec{track.Codec},
+					Codecs:    []*core.Codec{codec},
 					ID:        "trackID=" + strconv.Itoa(i),
 				}
 				medias = append(medias, media)

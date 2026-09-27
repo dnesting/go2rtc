@@ -46,6 +46,8 @@ type Conn struct {
 	session   string
 	uri       string
 
+	sources []*core.Receiver // receivers of Senders in passive consumer mode
+
 	state   State
 	stateMu sync.Mutex
 

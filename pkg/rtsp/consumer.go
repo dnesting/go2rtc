@@ -45,6 +45,8 @@ func (c *Conn) AddTrack(media *core.Media, codec *core.Codec, track *core.Receiv
 		// generate new payload type, starting from 96
 		codec.PayloadType = byte(96 + len(c.Senders))
 
+		c.sources = append(c.sources, track)
+
 	default:
 		panic(core.Caller())
 	}
