@@ -1,6 +1,8 @@
 package onvif
 
 import (
+	"math"
+
 	"github.com/AlexxIT/go2rtc/pkg/core"
 	"github.com/AlexxIT/go2rtc/pkg/h264"
 	"github.com/AlexxIT/go2rtc/pkg/h265"
@@ -29,8 +31,9 @@ const (
 	defaultBitrate   = 8192
 )
 
-// NewProfile describes a stream from its codecs. Unknown values fall back to defaults.
-func NewProfile(token string, codecs []*core.Codec) *Profile {
+// NewProfile describes a stream from its codecs. The frame rate comes from the SPS,
+// else from frameRate (e.g. measured from timestamps) if not 0. Unknown values fall back to defaults.
+func NewProfile(token string, codecs []*core.Codec, frameRate float64) *Profile {
 	p := &Profile{
 		Token: token,
 		Video: Video{
@@ -57,6 +60,9 @@ func NewProfile(token string, codecs []*core.Codec) *Profile {
 				p.Video.Width = int(s.Width())
 				p.Video.Height = int(s.Height())
 				p.Video.Profile = s.Profile()
+				if fps := s.FrameRate(); fps > 0 {
+					frameRate = fps
+				}
 			}
 
 		case core.CodecH265:
@@ -72,6 +78,10 @@ func NewProfile(token string, codecs []*core.Codec) *Profile {
 				}
 			}
 		}
+	}
+
+	if hasVideo && frameRate > 0 {
+		p.Video.FrameRate = int(math.Round(frameRate))
 	}
 
 	return p

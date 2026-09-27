@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/binary"
+	"math"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -33,6 +34,10 @@ func (p *producer) Start() error { <-p.done; return nil }
 func (p *producer) Stop() error { close(p.done); return nil }
 
 func TestGetProfiles(t *testing.T) {
+	window := frameRateWindow
+	frameRateWindow = 100 * time.Millisecond // the SPS declares no frame rate and the source sends no frames
+	t.Cleanup(func() { frameRateWindow = window })
+
 	// a 2560x1920 H264 stream (Amcrest AD410), parameter sets in the SDP
 	streams.HandleFunc("camera", func(string) (core.Producer, error) {
 		return &producer{
@@ -71,15 +76,6 @@ func avcc(nalus ...[]byte) []byte {
 	return b
 }
 
-func closed(ch chan struct{}) bool {
-	select {
-	case <-ch:
-		return true
-	default:
-		return false
-	}
-}
-
 func TestVideoWatchInBandSPS(t *testing.T) {
 	// H265 without parameter sets in the SDP (e.g. Hikvision DVRs): the SPS comes with the first keyframe
 	sps, err := base64.StdEncoding.DecodeString("QgEBIUAAAAMAkAAAAwAAAwCWoAUCAWlnpbkShc1AQIC4QAAAAwBAAAAFFEn/eEAOpgAV+V8IBBA=")
@@ -91,7 +87,7 @@ func TestVideoWatchInBandSPS(t *testing.T) {
 	w.frame(&rtp.Packet{Payload: avcc(sps, []byte{0x26, 0x01, 0xAA})}) // SPS, IDR slice
 	require.True(t, closed(w.params))
 
-	profile := onvif.NewProfile("main", []*core.Codec{codec})
+	profile := onvif.NewProfile("main", []*core.Codec{codec}, 0)
 	require.Equal(t, "H265", profile.Video.Encoding)
 	require.Equal(t, 640, profile.Video.Width)
 	require.Equal(t, 360, profile.Video.Height)
@@ -99,6 +95,35 @@ func TestVideoWatchInBandSPS(t *testing.T) {
 	// no waiting when the SDP has the parameter sets
 	w = newVideoWatch(&core.Codec{Name: core.CodecH265, FmtpLine: "sprop-sps=" + base64.StdEncoding.EncodeToString(sps)})
 	require.True(t, closed(w.params))
+}
+
+func TestVideoWatchFrameRate(t *testing.T) {
+	// Hikvision DVR H265 SPS: parameter sets in-band only, no VUI timing
+	sps, _ := base64.StdEncoding.DecodeString("QgEGIWAAAAMAAAMAAAMAAAMAewAAoAPAgBEHy7ve96clEVcqn1KS5uAgICAQ")
+	frame := []byte{0x02, 0x01, 0xAA} // non-IDR slice
+
+	w := newVideoWatch(&core.Codec{Name: core.CodecH265, ClockRate: 90000})
+	require.False(t, closed(w.params))
+
+	ts := uint32(math.MaxUint32 - 10000) // timestamps wrap around during the measurement
+	w.frame(&rtp.Packet{Header: rtp.Header{Timestamp: ts}, Payload: avcc(sps, frame)})
+	require.True(t, closed(w.params))
+	require.Contains(t, w.codec.FmtpLine, "sprop-sps=")
+
+	for i := 1; i < framesToMeasure; i++ {
+		require.False(t, closed(w.measured))
+		ts += 90000 / 12
+		w.frame(&rtp.Packet{Header: rtp.Header{Timestamp: ts}, Payload: avcc(frame)})
+	}
+	require.True(t, closed(w.measured))
+	require.InDelta(t, 12, w.frameRate(), 0.01)
+
+	// a frame rate declared in the SPS needs no measurement
+	w = newVideoWatch(&core.Codec{Name: core.CodecH264, ClockRate: 90000,
+		FmtpLine: "sprop-parameter-sets=Z00AKpWoHgCJ+WEAAAXcAAFfkAQ=,aO48gA=="})
+	require.True(t, closed(w.params))
+	require.True(t, closed(w.measured))
+	require.True(t, w.declared)
 }
 
 func TestProbeWaitClientGone(t *testing.T) {

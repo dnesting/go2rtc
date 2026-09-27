@@ -88,6 +88,14 @@ func (s *SPS) Height() uint16 {
 	return uint16(height - crop)
 }
 
+// FrameRate returns the frame rate from the VUI timing info, or 0 if absent.
+func (s *SPS) FrameRate() float64 {
+	if s.timing_info_present_flag == 0 || s.num_units_in_tick == 0 {
+		return 0
+	}
+	return float64(s.time_scale) / float64(2*s.num_units_in_tick)
+}
+
 func DecodeSPS(sps []byte) *SPS {
 	// https://developer.ridgerun.com/wiki/index.php/H264_Analysis_Tools
 	// ffmpeg -i file.h264 -c copy -bsf:v trace_headers -f null -
