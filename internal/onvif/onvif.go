@@ -1,6 +1,7 @@
 package onvif
 
 import (
+	"context"
 	"io"
 	"net"
 	"net/http"
@@ -8,6 +9,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/AlexxIT/go2rtc/internal/api"
@@ -73,6 +75,8 @@ func onvifDeviceService(w http.ResponseWriter, r *http.Request) {
 
 	log.Trace().Msgf("[onvif] server request %s %s:\n%s", r.Method, r.RequestURI, b)
 
+	ctx := r.Context() // stop probing streams when the client drops the connection
+
 	switch operation {
 	case onvif.ServiceGetServiceCapabilities, // important for Hass
 		onvif.DeviceGetNetworkInterfaces, // important for Hass
@@ -85,10 +89,7 @@ func onvifDeviceService(w http.ResponseWriter, r *http.Request) {
 		onvif.DeviceGetNetworkProtocols,
 		onvif.DeviceGetNTP,
 		onvif.DeviceGetScopes,
-		onvif.MediaGetVideoEncoderConfiguration,
-		onvif.MediaGetVideoEncoderConfigurations,
 		onvif.MediaGetAudioEncoderConfigurations,
-		onvif.MediaGetVideoEncoderConfigurationOptions,
 		onvif.MediaGetAudioSources,
 		onvif.MediaGetAudioSourceConfigurations:
 		b = onvif.StaticResponse(operation)
@@ -112,23 +113,38 @@ func onvifDeviceService(w http.ResponseWriter, r *http.Request) {
 		})
 
 	case onvif.MediaGetVideoSources:
-		b = onvif.GetVideoSourcesResponse(getProfiles())
+		b = onvif.GetVideoSourcesResponse(getProfiles(ctx))
 
 	case onvif.MediaGetProfiles:
 		// important for Hass: H264 codec, width, height
-		b = onvif.GetProfilesResponse(getProfiles())
+		b = onvif.GetProfilesResponse(getProfiles(ctx))
 
 	case onvif.MediaGetProfile:
 		token := onvif.FindTagValue(b, "ProfileToken")
-		b = onvif.GetProfileResponse(getProfile(token))
+		b = onvif.GetProfileResponse(getProfile(ctx, token))
 
 	case onvif.MediaGetVideoSourceConfigurations:
 		// important for Happytime Onvif Client
-		b = onvif.GetVideoSourceConfigurationsResponse(getProfiles())
+		b = onvif.GetVideoSourceConfigurationsResponse(getProfiles(ctx))
 
 	case onvif.MediaGetVideoSourceConfiguration:
 		token := onvif.FindTagValue(b, "ConfigurationToken")
-		b = onvif.GetVideoSourceConfigurationResponse(getProfile(token))
+		b = onvif.GetVideoSourceConfigurationResponse(getProfile(ctx, token))
+
+	case onvif.MediaGetVideoEncoderConfigurations:
+		b = onvif.GetVideoEncoderConfigurationsResponse(getProfiles(ctx))
+
+	case onvif.MediaGetVideoEncoderConfiguration:
+		token := onvif.FindTagValue(b, "ConfigurationToken")
+		b = onvif.GetVideoEncoderConfigurationResponse(getProfile(ctx, token))
+
+	case onvif.MediaGetVideoEncoderConfigurationOptions:
+		// profile token and encoder configuration token are the same
+		token := onvif.FindTagValue(b, "ProfileToken")
+		if token == "" {
+			token = onvif.FindTagValue(b, "ConfigurationToken")
+		}
+		b = onvif.GetVideoEncoderConfigurationOptionsResponse(getProfile(ctx, token))
 
 	case onvif.MediaGetStreamUri:
 		host, _, err := net.SplitHostPort(r.Host)
@@ -158,21 +174,23 @@ func onvifDeviceService(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// getProfiles describes all streams.
-func getProfiles() []*onvif.Profile {
+// getProfiles describes all streams, probing them in parallel.
+func getProfiles(ctx context.Context) []*onvif.Profile {
 	names := streams.GetAllNames()
 
 	profiles := make([]*onvif.Profile, len(names))
+
+	var wg sync.WaitGroup
 	for i, name := range names {
-		profiles[i] = getProfile(name)
+		wg.Add(1)
+		go func() {
+			profiles[i] = getProfile(ctx, name)
+			wg.Done()
+		}()
 	}
+	wg.Wait()
 
 	return profiles
-}
-
-// getProfile describes a stream.
-func getProfile(name string) *onvif.Profile {
-	return onvif.NewProfile(name)
 }
 
 func apiOnvif(w http.ResponseWriter, r *http.Request) {
