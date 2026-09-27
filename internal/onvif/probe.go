@@ -13,6 +13,8 @@ import (
 // getProfile describes a stream from the codecs its source provides.
 // A running source answers immediately; an idle source is connected for the probe,
 // unless the client has already disconnected (ctx is done).
+// If the source doesn't declare the video parameter sets, the probe waits for them
+// in the stream (see core.Receiver.WaitCodec).
 func getProfile(ctx context.Context, name string) *onvif.Profile {
 	stream := streams.Get(name)
 	if stream == nil || ctx.Err() != nil {
@@ -25,15 +27,20 @@ func getProfile(ctx context.Context, name string) *onvif.Profile {
 		return onvif.NewProfile(name, nil)
 	}
 
+	codecs := make([]*core.Codec, len(cons.tracks))
+	for i, track := range cons.tracks {
+		codecs[i] = track.WaitCodec(ctx)
+	}
+
 	stream.RemoveConsumer(cons)
 
-	return onvif.NewProfile(name, cons.Codecs())
+	return onvif.NewProfile(name, codecs)
 }
 
 type prober struct {
 	core.Connection
 
-	codecs []*core.Codec
+	tracks []*core.Receiver
 }
 
 func newProber() *prober {
@@ -47,7 +54,7 @@ func newProber() *prober {
 }
 
 func (p *prober) AddTrack(media *core.Media, _ *core.Codec, track *core.Receiver) error {
-	p.codecs = append(p.codecs, track.Codec.Clone())
+	p.tracks = append(p.tracks, track)
 
 	sender := core.NewSender(media, track.Codec)
 	sender.Handler = func(*rtp.Packet) {}
@@ -58,8 +65,4 @@ func (p *prober) AddTrack(media *core.Media, _ *core.Codec, track *core.Receiver
 
 func (p *prober) Start() error {
 	return nil
-}
-
-func (p *prober) Codecs() []*core.Codec {
-	return p.codecs
 }

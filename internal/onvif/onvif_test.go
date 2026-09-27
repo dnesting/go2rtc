@@ -1,12 +1,17 @@
 package onvif
 
 import (
+	"context"
+	"encoding/base64"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/AlexxIT/go2rtc/internal/streams"
 	"github.com/AlexxIT/go2rtc/pkg/core"
+	"github.com/AlexxIT/go2rtc/pkg/h264"
+	"github.com/pion/rtp"
 	"github.com/stretchr/testify/require"
 )
 
@@ -54,4 +59,76 @@ func TestGetProfiles(t *testing.T) {
 	require.Contains(t, b, "<tt:H264Profile>Baseline</tt:H264Profile>")
 	require.Contains(t, b, `token="cam_main"`)
 	require.Contains(t, b, `token="cam_sub"`)
+}
+
+// keyframeProducer is an H265 source without parameter sets in the SDP (e.g. Hikvision DVR)
+// that sends them with its first keyframe
+type keyframeProducer struct {
+	producer
+	track *core.Receiver
+}
+
+func (p *keyframeProducer) GetTrack(media *core.Media, codec *core.Codec) (*core.Receiver, error) {
+	p.track = core.NewReceiver(media, codec)
+	return p.track, nil
+}
+
+func (p *keyframeProducer) Start() error {
+	sps, _ := base64.StdEncoding.DecodeString("QgEBIUAAAAMAkAAAAwAAAwCWoAUCAWlnpbkShc1AQIC4QAAAAwBAAAAFFEn/eEAOpgAV+V8IBBA=")
+	p.track.Input(&rtp.Packet{Payload: h264.JoinNALU(
+		[]byte{0x40, 0x01, 0x0c, 0x01}, sps, []byte{0x44, 0x01, 0xc0, 0x73}, []byte{0x26, 0x01, 0xaf},
+	)})
+	return p.producer.Start()
+}
+
+func TestProbeInBandSPS(t *testing.T) {
+	streams.HandleFunc("dvr", func(string) (core.Producer, error) {
+		return &keyframeProducer{producer: producer{
+			medias: []*core.Media{
+				{Kind: core.KindVideo, Direction: core.DirectionRecvonly, Codecs: []*core.Codec{{
+					Name: core.CodecH265, ClockRate: 90000, PayloadType: core.PayloadTypeRAW,
+				}}},
+			},
+			done: make(chan struct{}),
+		}}, nil
+	})
+	_, err := streams.New("dvr", "dvr:1")
+	require.NoError(t, err)
+	t.Cleanup(func() { streams.Delete("dvr") })
+
+	profile := getProfile(context.Background(), "dvr")
+	require.Equal(t, "H265", profile.Video.Encoding)
+	require.Equal(t, 640, profile.Video.Width)
+	require.Equal(t, 360, profile.Video.Height)
+}
+
+func TestProbeWaitClientGone(t *testing.T) {
+	// H265 without parameter sets in the SDP and no packets: the probe waits for a keyframe
+	prod := &producer{
+		medias: []*core.Media{
+			{Kind: core.KindVideo, Direction: core.DirectionRecvonly, Codecs: []*core.Codec{{
+				Name: core.CodecH265, ClockRate: 90000, PayloadType: 96,
+			}}},
+		},
+		done: make(chan struct{}),
+	}
+	streams.HandleFunc("silent", func(string) (core.Producer, error) { return prod, nil })
+	_, err := streams.New("silent", "silent:1")
+	require.NoError(t, err)
+	t.Cleanup(func() { streams.Delete("silent") })
+
+	// the client disconnects while the probe waits
+	ctx, cancel := context.WithCancel(context.Background())
+	time.AfterFunc(100*time.Millisecond, cancel)
+
+	start := time.Now()
+	profile := getProfile(ctx, "silent")
+	require.Less(t, time.Since(start), time.Second)
+	require.Equal(t, "H265", profile.Video.Encoding)
+
+	select {
+	case <-prod.done: // the probe detached from the stream, so the source was stopped
+	case <-time.After(time.Second):
+		t.Fatal("probe still attached")
+	}
 }
