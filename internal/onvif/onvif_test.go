@@ -1,12 +1,18 @@
 package onvif
 
 import (
+	"context"
+	"encoding/base64"
+	"encoding/binary"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/AlexxIT/go2rtc/internal/streams"
 	"github.com/AlexxIT/go2rtc/pkg/core"
+	"github.com/AlexxIT/go2rtc/pkg/onvif"
+	"github.com/pion/rtp"
 	"github.com/stretchr/testify/require"
 )
 
@@ -54,4 +60,74 @@ func TestGetProfiles(t *testing.T) {
 	require.Contains(t, b, "<tt:H264Profile>Baseline</tt:H264Profile>")
 	require.Contains(t, b, `token="cam_main"`)
 	require.Contains(t, b, `token="cam_sub"`)
+}
+
+func avcc(nalus ...[]byte) []byte {
+	var b []byte
+	for _, nalu := range nalus {
+		b = binary.BigEndian.AppendUint32(b, uint32(len(nalu)))
+		b = append(b, nalu...)
+	}
+	return b
+}
+
+func closed(ch chan struct{}) bool {
+	select {
+	case <-ch:
+		return true
+	default:
+		return false
+	}
+}
+
+func TestVideoWatchInBandSPS(t *testing.T) {
+	// H265 without parameter sets in the SDP (e.g. Hikvision DVRs): the SPS comes with the first keyframe
+	sps, err := base64.StdEncoding.DecodeString("QgEBIUAAAAMAkAAAAwAAAwCWoAUCAWlnpbkShc1AQIC4QAAAAwBAAAAFFEn/eEAOpgAV+V8IBBA=")
+	require.NoError(t, err)
+
+	codec := &core.Codec{Name: core.CodecH265, ClockRate: 90000}
+	w := newVideoWatch(codec)
+	require.False(t, closed(w.params))
+	w.frame(&rtp.Packet{Payload: avcc(sps, []byte{0x26, 0x01, 0xAA})}) // SPS, IDR slice
+	require.True(t, closed(w.params))
+
+	profile := onvif.NewProfile("main", []*core.Codec{codec})
+	require.Equal(t, "H265", profile.Video.Encoding)
+	require.Equal(t, 640, profile.Video.Width)
+	require.Equal(t, 360, profile.Video.Height)
+
+	// no waiting when the SDP has the parameter sets
+	w = newVideoWatch(&core.Codec{Name: core.CodecH265, FmtpLine: "sprop-sps=" + base64.StdEncoding.EncodeToString(sps)})
+	require.True(t, closed(w.params))
+}
+
+func TestProbeWaitClientGone(t *testing.T) {
+	// H265 without parameter sets in the SDP and no packets: the probe waits for a keyframe
+	prod := &producer{
+		medias: []*core.Media{
+			{Kind: core.KindVideo, Direction: core.DirectionRecvonly, Codecs: []*core.Codec{{
+				Name: core.CodecH265, ClockRate: 90000, PayloadType: 96,
+			}}},
+		},
+		done: make(chan struct{}),
+	}
+	streams.HandleFunc("silent", func(string) (core.Producer, error) { return prod, nil })
+	_, err := streams.New("silent", "silent:1")
+	require.NoError(t, err)
+	t.Cleanup(func() { streams.Delete("silent") })
+
+	// the client disconnects while the probe waits
+	ctx, cancel := context.WithCancel(context.Background())
+	time.AfterFunc(100*time.Millisecond, cancel)
+
+	start := time.Now()
+	profile := getProfile(ctx, "silent")
+	require.Less(t, time.Since(start), time.Second)
+	require.Equal(t, "H265", profile.Video.Encoding)
+
+	select {
+	case <-prod.done: // the probe detached from the stream, so the source was stopped
+	case <-time.After(time.Second):
+		t.Fatal("probe still attached")
+	}
 }
