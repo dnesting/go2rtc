@@ -133,78 +133,78 @@ func GetDeviceInformationResponse(manuf, model, firmware, serial string) []byte 
 	return e.Bytes()
 }
 
-func GetProfilesResponse(names []string) []byte {
+func GetProfilesResponse(profiles []*Profile) []byte {
 	e := NewEnvelope()
 	e.Append(`<trt:GetProfilesResponse>`)
-	for _, name := range names {
-		appendProfile(e, "Profiles", name)
+	for _, p := range profiles {
+		appendProfile(e, "Profiles", p)
 	}
 	e.Append(`</trt:GetProfilesResponse>`)
 	return e.Bytes()
 }
 
-func GetProfileResponse(name string) []byte {
+func GetProfileResponse(p *Profile) []byte {
 	e := NewEnvelope()
 	e.Append(`<trt:GetProfileResponse>`)
-	appendProfile(e, "Profile", name)
+	appendProfile(e, "Profile", p)
 	e.Append(`</trt:GetProfileResponse>`)
 	return e.Bytes()
 }
 
-func appendProfile(e *Envelope, tag, name string) {
+func appendProfile(e *Envelope, tag string, p *Profile) {
 	// go2rtc name = ONVIF Profile Name = ONVIF Profile token
-	e.Appendf(`<trt:%s token="%s" fixed="true">`, tag, name)
-	e.Appendf(`<tt:Name>%s</tt:Name>`, name)
-	appendVideoSourceConfiguration(e, "VideoSourceConfiguration", name)
-	appendVideoEncoderConfiguration(e, "VideoEncoderConfiguration")
+	e.Appendf(`<trt:%s token="%s" fixed="true">`, tag, p.Token)
+	e.Appendf(`<tt:Name>%s</tt:Name>`, p.Token)
+	appendVideoSourceConfiguration(e, "VideoSourceConfiguration", p)
+	appendVideoEncoderConfiguration(e, "VideoEncoderConfiguration", p)
 	e.Appendf(`</trt:%s>`, tag)
 }
 
-func GetVideoSourcesResponse(names []string) []byte {
+func GetVideoSourcesResponse(profiles []*Profile) []byte {
 	// go2rtc name = ONVIF VideoSource token
 	e := NewEnvelope()
 	e.Append(`<trt:GetVideoSourcesResponse>`)
-	for _, name := range names {
+	for _, p := range profiles {
 		e.Appendf(`<trt:VideoSources token="%s">
-	<tt:Framerate>30.000000</tt:Framerate>
-	<tt:Resolution><tt:Width>1920</tt:Width><tt:Height>1080</tt:Height></tt:Resolution>
-</trt:VideoSources>`, name)
+	<tt:Framerate>%d</tt:Framerate>
+	<tt:Resolution><tt:Width>%d</tt:Width><tt:Height>%d</tt:Height></tt:Resolution>
+</trt:VideoSources>`, p.Token, p.Video.FrameRate, p.Video.Width, p.Video.Height)
 	}
 	e.Append(`</trt:GetVideoSourcesResponse>`)
 	return e.Bytes()
 }
 
-func GetVideoSourceConfigurationsResponse(names []string) []byte {
+func GetVideoSourceConfigurationsResponse(profiles []*Profile) []byte {
 	e := NewEnvelope()
 	e.Append(`<trt:GetVideoSourceConfigurationsResponse>`)
-	for _, name := range names {
-		appendVideoSourceConfiguration(e, "Configurations", name)
+	for _, p := range profiles {
+		appendVideoSourceConfiguration(e, "Configurations", p)
 	}
 	e.Append(`</trt:GetVideoSourceConfigurationsResponse>`)
 	return e.Bytes()
 }
 
-func GetVideoSourceConfigurationResponse(name string) []byte {
+func GetVideoSourceConfigurationResponse(p *Profile) []byte {
 	e := NewEnvelope()
 	e.Append(`<trt:GetVideoSourceConfigurationResponse>`)
-	appendVideoSourceConfiguration(e, "Configuration", name)
+	appendVideoSourceConfiguration(e, "Configuration", p)
 	e.Append(`</trt:GetVideoSourceConfigurationResponse>`)
 	return e.Bytes()
 }
 
-func appendVideoSourceConfiguration(e *Envelope, tag, name string) {
+func appendVideoSourceConfiguration(e *Envelope, tag string, p *Profile) {
 	// go2rtc name = ONVIF VideoSourceConfiguration token
 	e.Appendf(`<tt:%s token="%s" fixed="true">
 	<tt:Name>VSC</tt:Name>
 	<tt:SourceToken>%s</tt:SourceToken>
-	<tt:Bounds x="0" y="0" width="1920" height="1080"></tt:Bounds>
-</tt:%s>`, tag, name, name, tag)
+	<tt:Bounds x="0" y="0" width="%d" height="%d"></tt:Bounds>
+</tt:%s>`, tag, p.Token, p.Token, p.Video.Width, p.Video.Height, tag)
 }
 
 func GetVideoEncoderConfigurationsResponse() []byte {
 	e := NewEnvelope()
 	e.Append(`<trt:GetVideoEncoderConfigurationsResponse>`)
-	appendVideoEncoderConfiguration(e, "VideoEncoderConfigurations")
+	appendVideoEncoderConfiguration(e, "VideoEncoderConfigurations", NewProfile(""))
 	e.Append(`</trt:GetVideoEncoderConfigurationsResponse>`)
 	return e.Bytes()
 }
@@ -212,23 +212,25 @@ func GetVideoEncoderConfigurationsResponse() []byte {
 func GetVideoEncoderConfigurationResponse() []byte {
 	e := NewEnvelope()
 	e.Append(`<trt:GetVideoEncoderConfigurationResponse>`)
-	appendVideoEncoderConfiguration(e, "VideoEncoderConfiguration")
+	appendVideoEncoderConfiguration(e, "VideoEncoderConfiguration", NewProfile(""))
 	e.Append(`</trt:GetVideoEncoderConfigurationResponse>`)
 	return e.Bytes()
 }
 
-func appendVideoEncoderConfiguration(e *Envelope, tag string) {
+// all profiles share one encoder configuration token
+func appendVideoEncoderConfiguration(e *Envelope, tag string, p *Profile) {
 	// empty `RateControl` important for UniFi Protect
+	v := p.Video
 	e.Appendf(`<tt:%s token="vec">
-		<tt:Name>VEC</tt:Name>
-        <tt:UseCount>1</tt:UseCount>
-		<tt:Encoding>H264</tt:Encoding>
-		<tt:Resolution><tt:Width>1920</tt:Width><tt:Height>1080</tt:Height></tt:Resolution>
-        <tt:Quality>0</tt:Quality>
-		<tt:RateControl><tt:FrameRateLimit>30</tt:FrameRateLimit><tt:EncodingInterval>1</tt:EncodingInterval><tt:BitrateLimit>8192</tt:BitrateLimit></tt:RateControl>
-        <tt:H264><tt:GovLength>10</tt:GovLength><tt:H264Profile>Main</tt:H264Profile></tt:H264>
-        <tt:SessionTimeout>PT10S</tt:SessionTimeout>
-	</tt:%s>`, tag, tag)
+	<tt:Name>VEC</tt:Name>
+	<tt:UseCount>1</tt:UseCount>
+	<tt:Encoding>%s</tt:Encoding>
+	<tt:Resolution><tt:Width>%d</tt:Width><tt:Height>%d</tt:Height></tt:Resolution>
+	<tt:Quality>0</tt:Quality>
+	<tt:RateControl><tt:FrameRateLimit>%d</tt:FrameRateLimit><tt:EncodingInterval>1</tt:EncodingInterval><tt:BitrateLimit>%d</tt:BitrateLimit></tt:RateControl>
+	<tt:H264><tt:GovLength>10</tt:GovLength><tt:H264Profile>%s</tt:H264Profile></tt:H264>
+	<tt:SessionTimeout>PT10S</tt:SessionTimeout>
+</tt:%s>`, tag, v.Encoding, v.Width, v.Height, v.FrameRate, v.Bitrate, v.Profile, tag)
 }
 
 func GetStreamUriResponse(uri string) []byte {
