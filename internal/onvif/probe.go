@@ -41,7 +41,7 @@ func newProber() *prober {
 		Connection: core.Connection{
 			ID:         core.NewID(),
 			FormatName: "onvif",
-			Medias:     core.ParseQuery(url.Values{"video": {""}}),
+			Medias:     core.ParseQuery(url.Values{"video": {""}, "audio": {""}}),
 		},
 	}
 }

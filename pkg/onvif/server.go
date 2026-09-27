@@ -157,7 +157,13 @@ func appendProfile(e *Envelope, tag string, p *Profile) {
 	e.Appendf(`<trt:%s token="%s" fixed="true">`, tag, p.Token)
 	e.Appendf(`<tt:Name>%s</tt:Name>`, p.Token)
 	appendVideoSourceConfiguration(e, "VideoSourceConfiguration", p)
+	if p.Audio != nil {
+		appendAudioSourceConfiguration(e, "AudioSourceConfiguration", p)
+	}
 	appendVideoEncoderConfiguration(e, "VideoEncoderConfiguration", p)
+	if p.Audio != nil {
+		appendAudioEncoderConfiguration(e, "AudioEncoderConfiguration", p)
+	}
 	e.Appendf(`</trt:%s>`, tag)
 }
 
@@ -261,6 +267,62 @@ func GetVideoEncoderConfigurationOptionsResponse(p *Profile) []byte {
 	return e.Bytes()
 }
 
+func GetAudioSourcesResponse(profiles []*Profile) []byte {
+	e := NewEnvelope()
+	e.Append(`<trt:GetAudioSourcesResponse>`)
+	for _, p := range profiles {
+		if p.Audio != nil {
+			e.Appendf(`<trt:AudioSources token="%s"><tt:Channels>1</tt:Channels></trt:AudioSources>`, p.Token)
+		}
+	}
+	e.Append(`</trt:GetAudioSourcesResponse>`)
+	return e.Bytes()
+}
+
+func GetAudioSourceConfigurationsResponse(profiles []*Profile) []byte {
+	e := NewEnvelope()
+	e.Append(`<trt:GetAudioSourceConfigurationsResponse>`)
+	for _, p := range profiles {
+		if p.Audio != nil {
+			appendAudioSourceConfiguration(e, "Configurations", p)
+		}
+	}
+	e.Append(`</trt:GetAudioSourceConfigurationsResponse>`)
+	return e.Bytes()
+}
+
+func appendAudioSourceConfiguration(e *Envelope, tag string, p *Profile) {
+	e.Appendf(`<tt:%s token="%s">
+	<tt:Name>ASC</tt:Name>
+	<tt:UseCount>1</tt:UseCount>
+	<tt:SourceToken>%s</tt:SourceToken>
+</tt:%s>`, tag, p.Token, p.Token, tag)
+}
+
+func GetAudioEncoderConfigurationsResponse(profiles []*Profile) []byte {
+	e := NewEnvelope()
+	e.Append(`<trt:GetAudioEncoderConfigurationsResponse>`)
+	for _, p := range profiles {
+		if p.Audio != nil {
+			appendAudioEncoderConfiguration(e, "Configurations", p)
+		}
+	}
+	e.Append(`</trt:GetAudioEncoderConfigurationsResponse>`)
+	return e.Bytes()
+}
+
+func appendAudioEncoderConfiguration(e *Envelope, tag string, p *Profile) {
+	a := p.Audio
+	e.Appendf(`<tt:%s token="%s">
+	<tt:Name>AEC</tt:Name>
+	<tt:UseCount>1</tt:UseCount>
+	<tt:Encoding>%s</tt:Encoding>
+	<tt:Bitrate>%d</tt:Bitrate>
+	<tt:SampleRate>%d</tt:SampleRate>
+	<tt:SessionTimeout>PT10S</tt:SessionTimeout>
+</tt:%s>`, tag, p.Token, a.Encoding, a.Bitrate, a.SampleRate, tag)
+}
+
 func GetStreamUriResponse(uri string) []byte {
 	e := NewEnvelope()
 	e.Appendf(`<trt:GetStreamUriResponse><trt:MediaUri><tt:Uri>%s</tt:Uri></trt:MediaUri></trt:GetStreamUriResponse>`, uri)
@@ -307,8 +369,4 @@ var responses = map[string]string{
 	<tds:Scopes><tt:ScopeDef>Fixed</tt:ScopeDef><tt:ScopeItem>onvif://www.onvif.org/Profile/Streaming</tt:ScopeItem></tds:Scopes>
 	<tds:Scopes><tt:ScopeDef>Fixed</tt:ScopeDef><tt:ScopeItem>onvif://www.onvif.org/type/Network_Video_Transmitter</tt:ScopeItem></tds:Scopes>
 </tds:GetScopesResponse>`,
-
-	MediaGetAudioEncoderConfigurations: `<trt:GetAudioEncoderConfigurationsResponse />`,
-	MediaGetAudioSources:               `<trt:GetAudioSourcesResponse />`,
-	MediaGetAudioSourceConfigurations:  `<trt:GetAudioSourceConfigurationsResponse />`,
 }

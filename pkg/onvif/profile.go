@@ -10,6 +10,7 @@ import (
 type Profile struct {
 	Token string
 	Video Video
+	Audio *Audio // nil if the stream has no audio
 }
 
 type Video struct {
@@ -19,6 +20,12 @@ type Video struct {
 	Height    int
 	FrameRate int
 	Bitrate   int // kbps
+}
+
+type Audio struct {
+	Encoding   string // G711 or AAC
+	SampleRate int    // kHz
+	Bitrate    int    // kbps
 }
 
 // defaults for values the stream doesn't tell us
@@ -70,6 +77,16 @@ func NewProfile(token string, codecs []*core.Codec) *Profile {
 					p.Video.Width = int(s.Width())
 					p.Video.Height = int(s.Height())
 				}
+			}
+
+		case core.CodecPCMA, core.CodecPCMU:
+			if p.Audio == nil {
+				p.Audio = &Audio{Encoding: "G711", SampleRate: int(codec.ClockRate) / 1000, Bitrate: 64}
+			}
+
+		case core.CodecAAC:
+			if p.Audio == nil {
+				p.Audio = &Audio{Encoding: "AAC", SampleRate: int(codec.ClockRate) / 1000, Bitrate: 64}
 			}
 		}
 	}

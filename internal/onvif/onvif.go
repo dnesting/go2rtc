@@ -88,10 +88,7 @@ func onvifDeviceService(w http.ResponseWriter, r *http.Request) {
 		onvif.DeviceGetNetworkDefaultGateway,
 		onvif.DeviceGetNetworkProtocols,
 		onvif.DeviceGetNTP,
-		onvif.DeviceGetScopes,
-		onvif.MediaGetAudioEncoderConfigurations,
-		onvif.MediaGetAudioSources,
-		onvif.MediaGetAudioSourceConfigurations:
+		onvif.DeviceGetScopes:
 		b = onvif.StaticResponse(operation)
 
 	case onvif.DeviceGetCapabilities:
@@ -145,6 +142,15 @@ func onvifDeviceService(w http.ResponseWriter, r *http.Request) {
 			token = onvif.FindTagValue(b, "ConfigurationToken")
 		}
 		b = onvif.GetVideoEncoderConfigurationOptionsResponse(getProfile(ctx, token))
+
+	case onvif.MediaGetAudioSources:
+		b = onvif.GetAudioSourcesResponse(getProfiles(ctx))
+
+	case onvif.MediaGetAudioSourceConfigurations:
+		b = onvif.GetAudioSourceConfigurationsResponse(getProfiles(ctx))
+
+	case onvif.MediaGetAudioEncoderConfigurations:
+		b = onvif.GetAudioEncoderConfigurationsResponse(getProfiles(ctx))
 
 	case onvif.MediaGetStreamUri:
 		host, _, err := net.SplitHostPort(r.Host)

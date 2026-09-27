@@ -27,13 +27,16 @@ func (p *producer) Start() error { <-p.done; return nil }
 func (p *producer) Stop() error { close(p.done); return nil }
 
 func TestGetProfiles(t *testing.T) {
-	// a 2560x1920 H264 stream (Amcrest AD410), parameter sets in the SDP
+	// a 2560x1920 H264 stream (Amcrest AD410) with PCMA audio, parameter sets in the SDP
 	streams.HandleFunc("camera", func(string) (core.Producer, error) {
 		return &producer{
 			medias: []*core.Media{
 				{Kind: core.KindVideo, Direction: core.DirectionRecvonly, Codecs: []*core.Codec{{
 					Name: core.CodecH264, ClockRate: 90000, PayloadType: 96,
 					FmtpLine: "packetization-mode=1;sprop-parameter-sets=Z0IAMukAUAHjQgAAB9IAAOqcCAA=,aM48gA==",
+				}}},
+				{Kind: core.KindAudio, Direction: core.DirectionRecvonly, Codecs: []*core.Codec{{
+					Name: core.CodecPCMA, ClockRate: 8000, PayloadType: 8,
 				}}},
 			},
 			done: make(chan struct{}),
@@ -54,4 +57,5 @@ func TestGetProfiles(t *testing.T) {
 	require.Contains(t, b, "<tt:H264Profile>Baseline</tt:H264Profile>")
 	require.Contains(t, b, `token="cam_main"`)
 	require.Contains(t, b, `token="cam_sub"`)
+	require.Contains(t, b, "<tt:Encoding>G711</tt:Encoding>")
 }
