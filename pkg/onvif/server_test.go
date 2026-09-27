@@ -111,6 +111,7 @@ func TestProfileResponses(t *testing.T) {
 		GetVideoEncoderConfigurationsResponse([]*Profile{main, sub}),
 		GetVideoEncoderConfigurationResponse(sub),
 		GetVideoEncoderConfigurationOptionsResponse(sub),
+		FaultResponse("probe <main>: timeout"),
 	} {
 		require.NoError(t, xml.Unmarshal(b, new(any)))
 	}

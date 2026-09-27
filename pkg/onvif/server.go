@@ -3,6 +3,7 @@ package onvif
 import (
 	"bytes"
 	"fmt"
+	"html"
 	"regexp"
 	"time"
 )
@@ -270,6 +271,16 @@ func GetStreamUriResponse(uri string) []byte {
 func GetSnapshotUriResponse(uri string) []byte {
 	e := NewEnvelope()
 	e.Appendf(`<trt:GetSnapshotUriResponse><trt:MediaUri><tt:Uri>%s</tt:Uri></trt:MediaUri></trt:GetSnapshotUriResponse>`, uri)
+	return e.Bytes()
+}
+
+// FaultResponse is a SOAP 1.2 receiver fault, for requests the server can't answer right now.
+func FaultResponse(reason string) []byte {
+	e := NewEnvelope()
+	e.Append(`<s:Fault xmlns:ter="http://www.onvif.org/ver10/error">
+	<s:Code><s:Value>s:Receiver</s:Value><s:Subcode><s:Value>ter:Action</s:Value></s:Subcode></s:Code>
+	<s:Reason><s:Text xml:lang="en">`, html.EscapeString(reason), `</s:Text></s:Reason>
+</s:Fault>`)
 	return e.Bytes()
 }
 
