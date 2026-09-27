@@ -112,23 +112,23 @@ func onvifDeviceService(w http.ResponseWriter, r *http.Request) {
 		})
 
 	case onvif.MediaGetVideoSources:
-		b = onvif.GetVideoSourcesResponse(streams.GetAllNames())
+		b = onvif.GetVideoSourcesResponse(getProfiles())
 
 	case onvif.MediaGetProfiles:
 		// important for Hass: H264 codec, width, height
-		b = onvif.GetProfilesResponse(streams.GetAllNames())
+		b = onvif.GetProfilesResponse(getProfiles())
 
 	case onvif.MediaGetProfile:
 		token := onvif.FindTagValue(b, "ProfileToken")
-		b = onvif.GetProfileResponse(token)
+		b = onvif.GetProfileResponse(getProfile(token))
 
 	case onvif.MediaGetVideoSourceConfigurations:
 		// important for Happytime Onvif Client
-		b = onvif.GetVideoSourceConfigurationsResponse(streams.GetAllNames())
+		b = onvif.GetVideoSourceConfigurationsResponse(getProfiles())
 
 	case onvif.MediaGetVideoSourceConfiguration:
 		token := onvif.FindTagValue(b, "ConfigurationToken")
-		b = onvif.GetVideoSourceConfigurationResponse(token)
+		b = onvif.GetVideoSourceConfigurationResponse(getProfile(token))
 
 	case onvif.MediaGetStreamUri:
 		host, _, err := net.SplitHostPort(r.Host)
@@ -156,6 +156,23 @@ func onvifDeviceService(w http.ResponseWriter, r *http.Request) {
 	if _, err = w.Write(b); err != nil {
 		log.Error().Err(err).Caller().Send()
 	}
+}
+
+// getProfiles describes all streams.
+func getProfiles() []*onvif.Profile {
+	names := streams.GetAllNames()
+
+	profiles := make([]*onvif.Profile, len(names))
+	for i, name := range names {
+		profiles[i] = getProfile(name)
+	}
+
+	return profiles
+}
+
+// getProfile describes a stream.
+func getProfile(name string) *onvif.Profile {
+	return onvif.NewProfile(name)
 }
 
 func apiOnvif(w http.ResponseWriter, r *http.Request) {
