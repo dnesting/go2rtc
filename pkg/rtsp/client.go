@@ -31,6 +31,13 @@ func NewClient(uri string) *Conn {
 }
 
 func (c *Conn) Dial() (err error) {
+	// Dial replaces any transport already on this Conn, so close the old one
+	// first. Otherwise re-dialing leaks the socket and its read buffer.
+	if c.conn != nil {
+		_ = c.conn.Close()
+		c.conn = nil
+	}
+
 	if c.URL, err = url.Parse(c.uri); err != nil {
 		return
 	}
@@ -395,6 +402,9 @@ func (c *Conn) Teardown() (err error) {
 }
 
 func (c *Conn) Close() error {
+	if c.conn == nil {
+		return nil // never dialed, or the dial failed
+	}
 	if c.mode == core.ModeActiveProducer {
 		_ = c.Teardown()
 	}

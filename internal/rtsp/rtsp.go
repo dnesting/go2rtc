@@ -126,6 +126,7 @@ func rtspHandler(rawURL string) (core.Producer, error) {
 
 	if err := conn.Describe(); err != nil {
 		if !conn.Backchannel {
+			_ = conn.Close()
 			return nil, err
 		}
 		log.Trace().Msgf("[rtsp] describe (backchannel=%t) err: %v", conn.Backchannel, err)
@@ -133,9 +134,11 @@ func rtspHandler(rawURL string) (core.Producer, error) {
 		// second try without backchannel, we need to reconnect
 		conn.Backchannel = false
 		if err = conn.Dial(); err != nil {
+			_ = conn.Close()
 			return nil, err
 		}
 		if err = conn.Describe(); err != nil {
+			_ = conn.Close()
 			return nil, err
 		}
 	}
