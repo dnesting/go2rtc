@@ -34,7 +34,18 @@ type Producer struct {
 	state    state
 	mu       sync.Mutex
 	workerID int
+
+	// last failure from the lazy Dial below, and when it happened
+	dialErr   error
+	dialErrAt time.Time
 }
+
+// dialFailCooldown is how long a failed lazy dial is remembered. GetProducer can
+// block for seconds on an unresponsive source, and it runs under p.mu, so every
+// consumer that asks for this stream meanwhile queues on that mutex. Without
+// this cooldown each queued consumer then repeats the whole slow dial, so the
+// queue drains slower than it fills and the waiters pile up without bound.
+const dialFailCooldown = time.Second
 
 const SourceTemplate = "{input}"
 
@@ -58,15 +69,25 @@ func (p *Producer) Dial() error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
-	if p.state == stateNone {
-		conn, err := GetProducer(p.url)
-		if err != nil {
-			return err
-		}
-
-		p.conn = conn
-		p.state = stateMedias
+	if p.state != stateNone {
+		return nil
 	}
+
+	// Callers that queued on p.mu while a dial was failing get that failure
+	// instead of each repeating it.
+	if p.dialErr != nil && time.Since(p.dialErrAt) < dialFailCooldown {
+		return p.dialErr
+	}
+
+	conn, err := GetProducer(p.url)
+	if err != nil {
+		p.dialErr, p.dialErrAt = err, time.Now()
+		return err
+	}
+
+	p.dialErr = nil
+	p.conn = conn
+	p.state = stateMedias
 
 	return nil
 }
