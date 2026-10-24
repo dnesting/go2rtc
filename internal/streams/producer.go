@@ -34,6 +34,11 @@ type Producer struct {
 	state    state
 	mu       sync.Mutex
 	workerID int
+
+	// dialing is non-nil while one caller is dialing this producer, and is
+	// closed when that dial finishes. dialErr carries its result.
+	dialing chan struct{}
+	dialErr error
 }
 
 const SourceTemplate = "{input}"
@@ -54,21 +59,79 @@ func (p *Producer) SetSource(s string) {
 	}
 }
 
+// Dial connects the producer unless it is already connected. GetProducer can
+// block for seconds on an unresponsive source, so it runs with p.mu released,
+// and callers arriving meanwhile wait for that one dial and share its result
+// rather than each repeating it.
 func (p *Producer) Dial() error {
 	p.mu.Lock()
-	defer p.mu.Unlock()
 
-	if p.state == stateNone {
-		conn, err := GetProducer(p.url)
-		if err != nil {
+	for {
+		if p.state != stateNone {
+			p.mu.Unlock()
+			return nil
+		}
+
+		dialing := p.dialing
+		if dialing == nil {
+			break // nobody is dialing, so this call owns it
+		}
+
+		// Wait for the in-flight dial, without holding the lock.
+		p.mu.Unlock()
+		<-dialing
+		p.mu.Lock()
+
+		if p.state != stateNone {
+			p.mu.Unlock()
+			return nil
+		}
+		if err := p.dialErr; err != nil {
+			p.mu.Unlock()
 			return err
 		}
 
-		p.conn = conn
-		p.state = stateMedias
+		// That dial connected, but the producer was stopped again before this
+		// caller woke up, so there is nothing to use. Try once more.
 	}
 
-	return nil
+	dialing := make(chan struct{})
+	p.dialing = dialing
+	url := p.url
+	p.mu.Unlock()
+
+	var conn core.Producer
+	var err error
+	var stale bool
+
+	// Runs second: a conn that arrived too late belongs to nobody, so release
+	// it rather than leaking it. Done outside the lock because Stop can block.
+	defer func() {
+		if err == nil && stale {
+			_ = conn.Stop()
+		}
+	}()
+
+	// Runs first, and must run even if GetProducer panics, or waiters would
+	// block on dialing forever.
+	defer func() {
+		p.mu.Lock()
+		// state can only have left stateNone if the producer was stopped and
+		// restarted while this dial was running, which makes conn stale.
+		stale = p.state != stateNone
+		if err == nil && !stale {
+			p.conn = conn
+			p.state = stateMedias
+		}
+		p.dialErr = err
+		p.dialing = nil
+		close(dialing)
+		p.mu.Unlock()
+	}()
+
+	conn, err = GetProducer(url)
+
+	return err
 }
 
 func (p *Producer) GetMedias() []*core.Media {
