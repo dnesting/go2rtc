@@ -7,6 +7,8 @@ import (
 	"sync"
 	"time"
 
+	"golang.org/x/sync/singleflight"
+
 	"github.com/AlexxIT/go2rtc/pkg/core"
 )
 
@@ -34,6 +36,9 @@ type Producer struct {
 	state    state
 	mu       sync.Mutex
 	workerID int
+
+	// dedups concurrent lazy dials of this producer
+	dialGroup singleflight.Group
 }
 
 const SourceTemplate = "{input}"
@@ -54,21 +59,40 @@ func (p *Producer) SetSource(s string) {
 	}
 }
 
+// Dial connects the producer unless it is already connected. GetProducer can
+// block for seconds on an unresponsive source, so it runs without p.mu held and
+// concurrent callers share one dial instead of each repeating it.
 func (p *Producer) Dial() error {
 	p.mu.Lock()
-	defer p.mu.Unlock()
+	if p.state != stateNone {
+		p.mu.Unlock()
+		return nil
+	}
+	url := p.url
+	p.mu.Unlock()
 
-	if p.state == stateNone {
-		conn, err := GetProducer(p.url)
+	_, err, _ := p.dialGroup.Do(url, func() (any, error) {
+		conn, err := GetProducer(url)
 		if err != nil {
-			return err
+			return nil, err
 		}
 
-		p.conn = conn
-		p.state = stateMedias
-	}
+		p.mu.Lock()
+		stale := p.state != stateNone
+		if !stale {
+			p.conn = conn
+			p.state = stateMedias
+		}
+		p.mu.Unlock()
 
-	return nil
+		if stale {
+			// stopped while we were dialling: nobody owns this conn
+			_ = conn.Stop()
+		}
+		return nil, nil
+	})
+
+	return err
 }
 
 func (p *Producer) GetMedias() []*core.Media {
